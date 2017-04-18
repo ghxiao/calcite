@@ -22,6 +22,7 @@ import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.logical.LogicalUnion;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexCall;
@@ -226,13 +227,14 @@ public abstract class SqlImplementor {
   }
 
   public static boolean isStar(RexProgram program) {
-    int i = 0;
-    for (RexLocalRef ref : program.getProjectList()) {
-      if (ref.getIndex() != i++) {
-        return false;
-      }
-    }
-    return i == program.getInputRowType().getFieldCount();
+      return false;
+//    int i = 0;
+//    for (RexLocalRef ref : program.getProjectList()) {
+//      if (ref.getIndex() != i++) {
+//        return false;
+//      }
+//    }
+//    return i == program.getInputRowType().getFieldCount();
   }
 
   public Result setOpToSql(SqlSetOperator operator, RelNode rel) {
@@ -606,6 +608,7 @@ public abstract class SqlImplementor {
             assert nodeList.size() == 1;
             return nodeList.get(0);
           } else {
+              // GUOHUI: don't understand
             nodeList.add(toSql(call.getType()));
           }
         }
@@ -984,9 +987,23 @@ public abstract class SqlImplementor {
         boolean qualified =
             !dialect.hasImplicitTableAlias() || aliases.size() > 1;
         if (needNew) {
-          newContext =
-              aliasContext(ImmutableMap.of(neededAlias, rel.getRowType()),
-                  qualified);
+            /*
+             * TODO(GUOHUI): check if the following is a proper fix. The same issue will probably happen also for other set operators (intersects, minus)
+             *
+             */
+            RelDataType rowType;
+            if (rel.getInput(0) != null && rel.getInput(0).getRelTypeName().equals(LogicalUnion.class.getSimpleName())){
+              rowType = rel.getInput(0).getRowType();
+            } else {
+                rowType = rel.getRowType();
+            }
+            newContext =
+                        aliasContext(ImmutableMap.of(neededAlias, rowType),
+                                qualified);
+
+//          newContext =
+//              aliasContext(ImmutableMap.of(neededAlias, rel.getRowType()),
+//                  qualified);
         } else {
           newContext = aliasContext(aliases, qualified);
         }

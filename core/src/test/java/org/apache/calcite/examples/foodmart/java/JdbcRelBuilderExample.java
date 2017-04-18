@@ -93,12 +93,12 @@ public class JdbcRelBuilderExample {
                 .scan("foodmart", "sales_fact_1997")
                 .project(b.alias(b.field("cust_id"), "id"))
                 .union(true)
-                .project(ImmutableList.of(b.field("id")),
-                        ImmutableList.of("id1")) // <- renaming is ignored in the generated SQL
+//                .project(ImmutableList.of(b.field("id")),
+//                        ImmutableList.of("id1"), true) // <- renaming is ignored in the generated SQL
 //                .project(ImmutableList.of(b.field("id"),b.field("id")),
 //                        ImmutableList.of("id1", "id2")) // <- fails
-//                .project(ImmutableList.of(b.field("id"),b.field("id")),
-//                        ImmutableList.of("id1", "id")) // <- fails
+                .project(ImmutableList.of(b.field("id"),b.field("id")),
+                        ImmutableList.of("id1", "id")) // <- fails
         ;
 
         SqlDialect dialect = SqlDialect.CALCITE;
