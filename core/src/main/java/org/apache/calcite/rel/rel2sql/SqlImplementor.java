@@ -214,27 +214,32 @@ public abstract class SqlImplementor {
     selectList.add(node);
   }
 
-  public static boolean isStar(List<RexNode> exps, RelDataType inputRowType) {
-    int i = 0;
-    for (RexNode ref : exps) {
-      if (!(ref instanceof RexInputRef)) {
-        return false;
-      } else if (((RexInputRef) ref).getIndex() != i++) {
-        return false;
+  public static boolean isStar(Result result, List<RexNode> exps, RelDataType inputRowType) {
+    if(result.aliases.isEmpty()) {
+      int i = 0;
+      for (RexNode ref : exps) {
+        if (!(ref instanceof RexInputRef)) {
+          return false;
+        } else if (((RexInputRef) ref).getIndex() != i++) {
+          return false;
+        }
       }
+      return i == inputRowType.getFieldCount();
     }
-    return i == inputRowType.getFieldCount();
+    return false;
   }
 
-  public static boolean isStar(RexProgram program) {
-      return false;
-//    int i = 0;
-//    for (RexLocalRef ref : program.getProjectList()) {
-//      if (ref.getIndex() != i++) {
-//        return false;
-//      }
-//    }
-//    return i == program.getInputRowType().getFieldCount();
+  public static boolean isStar(Result result, RexProgram program) {
+    if(result.aliases.isEmpty()) {
+      int i = 0;
+      for (RexLocalRef ref : program.getProjectList()) {
+        if (ref.getIndex() != i++) {
+          return false;
+        }
+      }
+      return i == program.getInputRowType().getFieldCount();
+    }
+    return false;
   }
 
   public Result setOpToSql(SqlSetOperator operator, RelNode rel) {
@@ -917,7 +922,7 @@ public abstract class SqlImplementor {
     final SqlNode node;
     private final String neededAlias;
     private final RelDataType neededType;
-    private final Map<String, RelDataType> aliases;
+    protected final Map<String, RelDataType> aliases;
     final Expressions.FluentList<Clause> clauses;
 
     public Result(SqlNode node, Collection<Clause> clauses, String neededAlias,

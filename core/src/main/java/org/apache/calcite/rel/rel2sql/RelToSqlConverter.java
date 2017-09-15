@@ -156,7 +156,7 @@ public class RelToSqlConverter extends SqlImplementor
   /** @see #dispatch */
   public Result visit(Project e) {
     Result x = visitChild(0, e.getInput());
-    if (isStar(e.getChildExps(), e.getInput().getRowType())) {
+    if(isStar(x, e.getChildExps(), e.getInput().getRowType())) {
       return x;
     }
     final Builder builder =
@@ -242,7 +242,7 @@ public class RelToSqlConverter extends SqlImplementor
         program.getCondition() != null
             ? x.builder(e, Clause.WHERE)
             : x.builder(e);
-    if (!isStar(program)) {
+    if (!isStar(x, program)) {
       final List<SqlNode> selectList = new ArrayList<>();
       for (RexLocalRef ref : program.getProjectList()) {
         SqlNode sqlExpr = builder.context.toSql(program, ref);
