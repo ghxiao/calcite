@@ -51,7 +51,7 @@ import java.math.BigDecimal;
  *
  * <p><code>R4 = GB(R3 on all attributes, count(c) as cnt, min(c) as m)</code>
  *
- * Note that we do not need <code>min(c)</code> in intersect distinct.
+ * <p>Note that we do not need <code>min(c)</code> in intersect distinct.
  *
  * <p><code>R5 = Filter(cnt == #branch)</code>
  *
@@ -107,7 +107,7 @@ public class IntersectToDistinctRule extends RelOptRule {
 
     final ImmutableBitSet groupSet =
         ImmutableBitSet.range(fieldCount - 1);
-    relBuilder.aggregate(relBuilder.groupKey(groupSet, false, null),
+    relBuilder.aggregate(relBuilder.groupKey(groupSet, null),
         relBuilder.countStar(null));
 
     // add a filter count(c) = #branches

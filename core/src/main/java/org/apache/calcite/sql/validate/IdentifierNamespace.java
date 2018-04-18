@@ -101,8 +101,18 @@ public class IdentifierNamespace extends AbstractNamespace {
     final SqlValidatorScope.ResolvedImpl resolved =
         new SqlValidatorScope.ResolvedImpl();
     final List<String> names = SqlIdentifier.toStar(id.names);
-    parentScope.resolveTable(names, nameMatcher,
-        SqlValidatorScope.Path.EMPTY, resolved);
+    try {
+      parentScope.resolveTable(names, nameMatcher,
+          SqlValidatorScope.Path.EMPTY, resolved);
+    } catch (CyclicDefinitionException e) {
+      if (e.depth == 1) {
+        throw validator.newValidationError(id,
+            RESOURCE.cyclicDefinition(id.toString(),
+                SqlIdentifier.getString(e.path)));
+      } else {
+        throw new CyclicDefinitionException(e.depth - 1, e.path);
+      }
+    }
     SqlValidatorScope.Resolve previousResolve = null;
     if (resolved.count() == 1) {
       final SqlValidatorScope.Resolve resolve =
@@ -234,10 +244,6 @@ public class IdentifierNamespace extends AbstractNamespace {
   @Override public SqlValidatorNamespace resolve() {
     assert resolvedNamespace != null : "must call validate first";
     return resolvedNamespace.resolve();
-  }
-
-  @Override public String translate(String name) {
-    return resolvedNamespace.translate(name);
   }
 
   @Override public SqlValidatorTable getTable() {

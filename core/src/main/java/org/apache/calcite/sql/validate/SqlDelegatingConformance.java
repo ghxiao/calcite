@@ -29,6 +29,18 @@ public class SqlDelegatingConformance extends SqlAbstractConformance {
     this.delegate = delegate;
   }
 
+  @Override public boolean isGroupByAlias() {
+    return delegate.isGroupByAlias();
+  }
+
+  @Override public boolean isGroupByOrdinal() {
+    return delegate.isGroupByOrdinal();
+  }
+
+  @Override public boolean isHavingAlias() {
+    return delegate.isGroupByAlias();
+  }
+
   @Override public boolean isSortByOrdinal() {
     return delegate.isSortByOrdinal();
   }
@@ -56,6 +68,11 @@ public class SqlDelegatingConformance extends SqlAbstractConformance {
   @Override public boolean isInsertSubsetColumnsAllowed() {
     return delegate.isInsertSubsetColumnsAllowed();
   }
+
+  @Override public boolean allowNiladicParentheses() {
+    return delegate.allowNiladicParentheses();
+  }
+
 }
 
 // End SqlDelegatingConformance.java

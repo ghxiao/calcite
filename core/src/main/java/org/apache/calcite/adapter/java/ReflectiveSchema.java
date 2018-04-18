@@ -27,6 +27,7 @@ import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.linq4j.tree.Types;
+import org.apache.calcite.rel.RelReferentialConstraint;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.schema.Function;
@@ -44,9 +45,12 @@ import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.AbstractTableQueryable;
 import org.apache.calcite.schema.impl.ReflectiveFunctionBase;
 import org.apache.calcite.util.BuiltInMethod;
+import org.apache.calcite.util.Util;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 
 import java.lang.reflect.Constructor;
@@ -54,6 +58,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -65,6 +70,8 @@ public class ReflectiveSchema
     extends AbstractSchema {
   private final Class clazz;
   private Object target;
+  private Map<String, Table> tableMap;
+  private Multimap<String, Function> functionMap;
 
   /**
    * Creates a ReflectiveSchema.
@@ -90,7 +97,15 @@ public class ReflectiveSchema
     return target;
   }
 
+  @SuppressWarnings({ "rawtypes", "unchecked" })
   @Override protected Map<String, Table> getTableMap() {
+    if (tableMap == null) {
+      tableMap = createTableMap();
+    }
+    return tableMap;
+  }
+
+  private Map<String, Table> createTableMap() {
     final ImmutableMap.Builder<String, Table> builder = ImmutableMap.builder();
     for (Field field : clazz.getFields()) {
       final String fieldName = field.getName();
@@ -100,10 +115,38 @@ public class ReflectiveSchema
       }
       builder.put(fieldName, table);
     }
-    return builder.build();
+    Map<String, Table> tableMap = builder.build();
+    // Unique-Key - Foreign-Key
+    for (Field field : clazz.getFields()) {
+      if (RelReferentialConstraint.class.isAssignableFrom(field.getType())) {
+        RelReferentialConstraint rc;
+        try {
+          rc = (RelReferentialConstraint) field.get(target);
+        } catch (IllegalAccessException e) {
+          throw new RuntimeException(
+              "Error while accessing field " + field, e);
+        }
+        FieldTable table =
+            (FieldTable) tableMap.get(Util.last(rc.getSourceQualifiedName()));
+        assert table != null;
+        table.statistic = Statistics.of(
+            ImmutableList.copyOf(
+                Iterables.concat(
+                    table.getStatistic().getReferentialConstraints(),
+                    Collections.singleton(rc))));
+      }
+    }
+    return tableMap;
   }
 
   @Override protected Multimap<String, Function> getFunctionMultimap() {
+    if (functionMap == null) {
+      functionMap = createFunctionMap();
+    }
+    return functionMap;
+  }
+
+  private Multimap<String, Function> createFunctionMap() {
     final ImmutableMultimap.Builder<String, Function> builder =
         ImmutableMultimap.builder();
     for (Method method : clazz.getMethods()) {
@@ -227,10 +270,10 @@ public class ReflectiveSchema
    *
    * <p>The following example instantiates a {@code FoodMart} object as a schema
    * that contains tables called {@code EMPS} and {@code DEPTS} based on the
-   * object's fields.</p>
+   * object's fields.
    *
-   * <pre>
-   * {@code schemas: [
+   * <blockquote><pre>
+   * schemas: [
    *     {
    *       name: "foodmart",
    *       type: "custom",
@@ -241,17 +284,16 @@ public class ReflectiveSchema
    *       }
    *     }
    *   ]
-   *
+   * &nbsp;
    * class FoodMart {
    *   public static final FoodMart instance() {
    *     return new FoodMart();
    *   }
-   *
+   * &nbsp;
    *   Employee[] EMPS;
    *   Department[] DEPTS;
-   * }
-   * }</pre>
-   * */
+   * }</pre></blockquote>
+   */
   public static class Factory implements SchemaFactory {
     public Schema create(SchemaPlus parentSchema, String name,
         Map<String, Object> operand) {
@@ -316,17 +358,30 @@ public class ReflectiveSchema
     }
   }
 
-  /** Table based on a Java field. */
+  /** Table based on a Java field.
+   *
+   * @param <T> element type */
   private static class FieldTable<T> extends ReflectiveTable {
     private final Field field;
+    private Statistic statistic;
 
     FieldTable(Field field, Type elementType, Enumerable<T> enumerable) {
+      this(field, elementType, enumerable, Statistics.UNKNOWN);
+    }
+
+    FieldTable(Field field, Type elementType, Enumerable<T> enumerable,
+        Statistic statistic) {
       super(elementType, enumerable);
       this.field = field;
+      this.statistic = statistic;
     }
 
     public String toString() {
       return "Relation {field=" + field.getName() + "}";
+    }
+
+    @Override public Statistic getStatistic() {
+      return statistic;
     }
 
     @Override public Expression getExpression(SchemaPlus schema,

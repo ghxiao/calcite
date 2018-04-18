@@ -20,8 +20,10 @@ import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalProject;
+import org.apache.calcite.tools.RelBuilderFactory;
 
 /**
  * MultiJoinProjectTransposeRule implements the rule for pulling
@@ -37,11 +39,11 @@ import org.apache.calcite.rel.logical.LogicalProject;
  * {@link org.apache.calcite.rel.logical.LogicalProject} we're pulling up, as
  * well as the join condition, in the resultant {@link MultiJoin}s
  *
- * <p>For example, if we have the following subselect:
+ * <p>For example, if we have the following sub-query:
  *
- * <pre>
- *      (select X.x1, Y.y1 from X, Y
- *          where X.x2 = Y.y2 and X.x3 = 1 and Y.y3 = 2)</pre>
+ * <blockquote><pre>
+ * (select X.x1, Y.y1 from X, Y
+ *  where X.x2 = Y.y2 and X.x3 = 1 and Y.y3 = 2)</pre></blockquote>
  *
  * <p>The {@link MultiJoin} associated with (X, Y) associates x1 with X and
  * y1 with Y. Although x3 and y3 need to be read due to the filters, they are
@@ -64,6 +66,7 @@ public class MultiJoinProjectTransposeRule extends JoinProjectTransposeRule {
                   operand(MultiJoin.class, any())),
               operand(LogicalProject.class,
                   operand(MultiJoin.class, any()))),
+          RelFactories.LOGICAL_BUILDER,
           "MultiJoinProjectTransposeRule: with two LogicalProject children");
 
   public static final MultiJoinProjectTransposeRule MULTI_LEFT_PROJECT =
@@ -72,6 +75,7 @@ public class MultiJoinProjectTransposeRule extends JoinProjectTransposeRule {
               some(
                   operand(LogicalProject.class,
                       operand(MultiJoin.class, any())))),
+          RelFactories.LOGICAL_BUILDER,
           "MultiJoinProjectTransposeRule: with LogicalProject on left");
 
   public static final MultiJoinProjectTransposeRule MULTI_RIGHT_PROJECT =
@@ -80,14 +84,24 @@ public class MultiJoinProjectTransposeRule extends JoinProjectTransposeRule {
               operand(RelNode.class, any()),
               operand(LogicalProject.class,
                   operand(MultiJoin.class, any()))),
+          RelFactories.LOGICAL_BUILDER,
           "MultiJoinProjectTransposeRule: with LogicalProject on right");
 
   //~ Constructors -----------------------------------------------------------
 
+  @Deprecated // to be removed before 2.0
   public MultiJoinProjectTransposeRule(
       RelOptRuleOperand operand,
       String description) {
-    super(operand, description);
+    this(operand, RelFactories.LOGICAL_BUILDER, description);
+  }
+
+  /** Creates a MultiJoinProjectTransposeRule. */
+  public MultiJoinProjectTransposeRule(
+      RelOptRuleOperand operand,
+      RelBuilderFactory relBuilderFactory,
+      String description) {
+    super(operand, description, false, relBuilderFactory);
   }
 
   //~ Methods ----------------------------------------------------------------

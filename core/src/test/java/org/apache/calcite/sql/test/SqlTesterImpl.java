@@ -24,13 +24,13 @@ import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.runtime.Utilities;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCollation;
-import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlIntervalLiteral;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.SqlSelect;
+import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
@@ -88,7 +88,7 @@ public class SqlTesterImpl implements SqlTester, AutoCloseable {
   /**
    * {@inheritDoc}
    *
-   * This default implementation does nothing.
+   * <p>This default implementation does nothing.
    */
   public void close() {
     // no resources to release
@@ -293,14 +293,17 @@ public class SqlTesterImpl implements SqlTester, AutoCloseable {
     if (conformance == null) {
       conformance = SqlConformanceEnum.DEFAULT;
     }
-    return with("conformance", conformance);
+    return with("conformance", conformance)
+        .withConnectionFactory(
+            CalciteAssert.EMPTY_CONNECTION_FACTORY
+                .with("conformance", conformance));
   }
 
   public SqlTester withOperatorTable(SqlOperatorTable operatorTable) {
     return with("operatorTable", operatorTable);
   }
 
-  public SqlTester withConnectionFactory(
+  public SqlTesterImpl withConnectionFactory(
       CalciteAssert.ConnectionFactory connectionFactory) {
     return with("connectionFactory", connectionFactory);
   }
@@ -472,7 +475,7 @@ public class SqlTesterImpl implements SqlTester, AutoCloseable {
       String expectedRewrite) {
     SqlNode rewrittenNode = parseAndValidate(validator, query);
     String actualRewrite =
-        rewrittenNode.toSqlString(SqlDialect.DUMMY, false).getSql();
+        rewrittenNode.toSqlString(AnsiSqlDialect.DEFAULT, false).getSql();
     TestUtil.assertEqualsVerbose(expectedRewrite, Util.toLinux(actualRewrite));
   }
 

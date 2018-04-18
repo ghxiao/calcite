@@ -45,7 +45,9 @@ import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Relational expression that computes a set of
@@ -271,10 +273,13 @@ public abstract class Project extends SingleRel {
    */
   public static Mappings.TargetMapping getMapping(int inputFieldCount,
       List<? extends RexNode> projects) {
+    if (inputFieldCount < projects.size()) {
+      return null; // surjection is not possible
+    }
     Mappings.TargetMapping mapping =
         Mappings.create(MappingType.INVERSE_SURJECTION,
             inputFieldCount, projects.size());
-    for (Ord<RexNode> exp : Ord.zip(projects)) {
+    for (Ord<RexNode> exp : Ord.<RexNode>zip(projects)) {
       if (!(exp.e instanceof RexInputRef)) {
         return null;
       }
@@ -301,7 +306,7 @@ public abstract class Project extends SingleRel {
     Mappings.TargetMapping mapping =
         Mappings.create(MappingType.INVERSE_FUNCTION,
             inputFieldCount, projects.size());
-    for (Ord<RexNode> exp : Ord.zip(projects)) {
+    for (Ord<RexNode> exp : Ord.<RexNode>zip(projects)) {
       if (exp.e instanceof RexInputRef) {
         mapping.set(((RexInputRef) exp.e).getIndex(), exp.i);
       }
@@ -330,11 +335,16 @@ public abstract class Project extends SingleRel {
     if (fieldCount != inputFieldCount) {
       return null;
     }
-    Permutation permutation = new Permutation(fieldCount);
+    final Permutation permutation = new Permutation(fieldCount);
+    final Set<Integer> alreadyProjected = new HashSet<>(fieldCount);
     for (int i = 0; i < fieldCount; ++i) {
       final RexNode exp = projects.get(i);
       if (exp instanceof RexInputRef) {
-        permutation.set(i, ((RexInputRef) exp).getIndex());
+        final int index = ((RexInputRef) exp).getIndex();
+        if (!alreadyProjected.add(index)) {
+          return null;
+        }
+        permutation.set(i, index);
       } else {
         return null;
       }

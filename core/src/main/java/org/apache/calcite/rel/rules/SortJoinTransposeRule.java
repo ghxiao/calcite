@@ -26,11 +26,13 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalSort;
 import org.apache.calcite.rel.metadata.RelMdUtil;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.tools.RelBuilderFactory;
 
 
 /**
@@ -45,16 +47,24 @@ public class SortJoinTransposeRule extends RelOptRule {
 
   public static final SortJoinTransposeRule INSTANCE =
       new SortJoinTransposeRule(LogicalSort.class,
-          LogicalJoin.class);
+          LogicalJoin.class, RelFactories.LOGICAL_BUILDER);
 
   //~ Constructors -----------------------------------------------------------
 
   /** Creates a SortJoinTransposeRule. */
+  @Deprecated // to be removed before 2.0
   public SortJoinTransposeRule(Class<? extends Sort> sortClass,
       Class<? extends Join> joinClass) {
+    this(sortClass, joinClass, RelFactories.LOGICAL_BUILDER);
+  }
+
+  /** Creates a SortJoinTransposeRule. */
+  public SortJoinTransposeRule(Class<? extends Sort> sortClass,
+      Class<? extends Join> joinClass, RelBuilderFactory relBuilderFactory) {
     super(
         operand(sortClass,
-            operand(joinClass, any())));
+            operand(joinClass, any())),
+        relBuilderFactory, null);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -62,7 +72,7 @@ public class SortJoinTransposeRule extends RelOptRule {
   @Override public boolean matches(RelOptRuleCall call) {
     final Sort sort = call.rel(0);
     final Join join = call.rel(1);
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = call.getMetadataQuery();
     final JoinInfo joinInfo = JoinInfo.of(
         join.getLeft(), join.getRight(), join.getCondition());
 
@@ -117,7 +127,7 @@ public class SortJoinTransposeRule extends RelOptRule {
     // We create a new sort operator on the corresponding input
     final RelNode newLeftInput;
     final RelNode newRightInput;
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = call.getMetadataQuery();
     if (join.getJoinType() == JoinRelType.LEFT) {
       // If the input is already sorted and we are not reducing the number of tuples,
       // we bail out

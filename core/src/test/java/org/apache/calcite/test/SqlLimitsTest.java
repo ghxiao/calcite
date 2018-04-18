@@ -21,8 +21,8 @@ import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
-import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlLiteral;
+import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.BasicSqlType;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -195,7 +195,7 @@ public class SqlLimitsTest {
     } else if (o instanceof Calendar) {
       Calendar calendar = (Calendar) o;
       DateFormat dateFormat = getDateFormat(type.getSqlTypeName());
-      dateFormat.setTimeZone(DateTimeUtils.GMT_ZONE);
+      dateFormat.setTimeZone(DateTimeUtils.UTC_ZONE);
       s = dateFormat.format(calendar.getTime());
     } else {
       s = o.toString();
@@ -204,7 +204,7 @@ public class SqlLimitsTest {
     SqlLiteral literal =
         type.getSqlTypeName().createLiteral(o, SqlParserPos.ZERO);
     pw.print("; as SQL: ");
-    pw.print(literal.toSqlString(SqlDialect.DUMMY));
+    pw.print(literal.toSqlString(AnsiSqlDialect.DEFAULT));
     pw.println();
   }
 

@@ -20,13 +20,21 @@ import org.apache.calcite.jdbc.SqlTimeoutException;
 import org.apache.calcite.util.Unsafe;
 import org.apache.calcite.util.Util;
 
+import org.slf4j.Logger;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.io.Reader;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.io.Writer;
 import java.lang.reflect.Constructor;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -114,92 +122,92 @@ public class ConcurrentTestCommandScript
   private static final String EOF = null;
 
   private static final StateAction[] STATE_TABLE = {
-    new StateAction(
-        PRE_SETUP_STATE,
-        new StateDatum[]{
-          new StateDatum(VAR, PRE_SETUP_STATE),
-          new StateDatum(LOCKSTEP, PRE_SETUP_STATE),
-          new StateDatum(NOLOCKSTEP, PRE_SETUP_STATE),
-          new StateDatum(ENABLED, PRE_SETUP_STATE),
-          new StateDatum(DISABLED, PRE_SETUP_STATE),
-          new StateDatum(PLUGIN, PRE_SETUP_STATE),
-          new StateDatum(SETUP, SETUP_STATE),
-          new StateDatum(CLEANUP, CLEANUP_STATE),
-          new StateDatum(THREAD, THREAD_STATE)
-        }),
+      new StateAction(
+          PRE_SETUP_STATE,
+          new StateDatum[]{
+              new StateDatum(VAR, PRE_SETUP_STATE),
+              new StateDatum(LOCKSTEP, PRE_SETUP_STATE),
+              new StateDatum(NOLOCKSTEP, PRE_SETUP_STATE),
+              new StateDatum(ENABLED, PRE_SETUP_STATE),
+              new StateDatum(DISABLED, PRE_SETUP_STATE),
+              new StateDatum(PLUGIN, PRE_SETUP_STATE),
+              new StateDatum(SETUP, SETUP_STATE),
+              new StateDatum(CLEANUP, CLEANUP_STATE),
+              new StateDatum(THREAD, THREAD_STATE)
+          }),
 
-    new StateAction(
-        SETUP_STATE,
-        new StateDatum[]{
-          new StateDatum(END, POST_SETUP_STATE),
-          new StateDatum(SQL, SETUP_STATE),
-          new StateDatum(INCLUDE, SETUP_STATE),
-        }),
+      new StateAction(
+          SETUP_STATE,
+          new StateDatum[]{
+              new StateDatum(END, POST_SETUP_STATE),
+              new StateDatum(SQL, SETUP_STATE),
+              new StateDatum(INCLUDE, SETUP_STATE),
+          }),
 
-    new StateAction(
-        POST_SETUP_STATE,
-        new StateDatum[]{
-          new StateDatum(CLEANUP, CLEANUP_STATE),
-          new StateDatum(THREAD, THREAD_STATE)
-        }),
+      new StateAction(
+          POST_SETUP_STATE,
+          new StateDatum[]{
+              new StateDatum(CLEANUP, CLEANUP_STATE),
+              new StateDatum(THREAD, THREAD_STATE)
+          }),
 
-    new StateAction(
-        CLEANUP_STATE,
-        new StateDatum[]{
-          new StateDatum(END, POST_CLEANUP_STATE),
-          new StateDatum(SQL, CLEANUP_STATE),
-          new StateDatum(INCLUDE, CLEANUP_STATE),
-        }),
+      new StateAction(
+          CLEANUP_STATE,
+          new StateDatum[]{
+              new StateDatum(END, POST_CLEANUP_STATE),
+              new StateDatum(SQL, CLEANUP_STATE),
+              new StateDatum(INCLUDE, CLEANUP_STATE),
+          }),
 
-    new StateAction(
-        POST_CLEANUP_STATE,
-        new StateDatum[]{
-          new StateDatum(THREAD, THREAD_STATE)
-        }),
+      new StateAction(
+          POST_CLEANUP_STATE,
+          new StateDatum[]{
+              new StateDatum(THREAD, THREAD_STATE)
+          }),
 
-    new StateAction(
-        THREAD_STATE,
-        new StateDatum[]{
-          new StateDatum(REPEAT, REPEAT_STATE),
-          new StateDatum(SYNC, THREAD_STATE),
-          new StateDatum(TIMEOUT, THREAD_STATE),
-          new StateDatum(ROWLIMIT, THREAD_STATE),
-          new StateDatum(PREPARE, THREAD_STATE),
-          new StateDatum(PRINT, THREAD_STATE),
-          new StateDatum(FETCH, THREAD_STATE),
-          new StateDatum(CLOSE, THREAD_STATE),
-          new StateDatum(SLEEP, THREAD_STATE),
-          new StateDatum(SQL, THREAD_STATE),
-          new StateDatum(ECHO, THREAD_STATE),
-          new StateDatum(ERR, THREAD_STATE),
-          new StateDatum(SHELL, THREAD_STATE),
-          new StateDatum(END, POST_THREAD_STATE)
-        }),
+      new StateAction(
+          THREAD_STATE,
+          new StateDatum[]{
+              new StateDatum(REPEAT, REPEAT_STATE),
+              new StateDatum(SYNC, THREAD_STATE),
+              new StateDatum(TIMEOUT, THREAD_STATE),
+              new StateDatum(ROWLIMIT, THREAD_STATE),
+              new StateDatum(PREPARE, THREAD_STATE),
+              new StateDatum(PRINT, THREAD_STATE),
+              new StateDatum(FETCH, THREAD_STATE),
+              new StateDatum(CLOSE, THREAD_STATE),
+              new StateDatum(SLEEP, THREAD_STATE),
+              new StateDatum(SQL, THREAD_STATE),
+              new StateDatum(ECHO, THREAD_STATE),
+              new StateDatum(ERR, THREAD_STATE),
+              new StateDatum(SHELL, THREAD_STATE),
+              new StateDatum(END, POST_THREAD_STATE)
+          }),
 
-    new StateAction(
-        REPEAT_STATE,
-        new StateDatum[]{
-          new StateDatum(SYNC, REPEAT_STATE),
-          new StateDatum(TIMEOUT, REPEAT_STATE),
-          new StateDatum(ROWLIMIT, REPEAT_STATE),
-          new StateDatum(PREPARE, REPEAT_STATE),
-          new StateDatum(PRINT, REPEAT_STATE),
-          new StateDatum(FETCH, REPEAT_STATE),
-          new StateDatum(CLOSE, REPEAT_STATE),
-          new StateDatum(SLEEP, REPEAT_STATE),
-          new StateDatum(SQL, REPEAT_STATE),
-          new StateDatum(ECHO, REPEAT_STATE),
-          new StateDatum(ERR, REPEAT_STATE),
-          new StateDatum(SHELL, REPEAT_STATE),
-          new StateDatum(END, THREAD_STATE)
-        }),
+      new StateAction(
+          REPEAT_STATE,
+          new StateDatum[]{
+              new StateDatum(SYNC, REPEAT_STATE),
+              new StateDatum(TIMEOUT, REPEAT_STATE),
+              new StateDatum(ROWLIMIT, REPEAT_STATE),
+              new StateDatum(PREPARE, REPEAT_STATE),
+              new StateDatum(PRINT, REPEAT_STATE),
+              new StateDatum(FETCH, REPEAT_STATE),
+              new StateDatum(CLOSE, REPEAT_STATE),
+              new StateDatum(SLEEP, REPEAT_STATE),
+              new StateDatum(SQL, REPEAT_STATE),
+              new StateDatum(ECHO, REPEAT_STATE),
+              new StateDatum(ERR, REPEAT_STATE),
+              new StateDatum(SHELL, REPEAT_STATE),
+              new StateDatum(END, THREAD_STATE)
+          }),
 
-    new StateAction(
-        POST_THREAD_STATE,
-        new StateDatum[]{
-          new StateDatum(THREAD, THREAD_STATE),
-          new StateDatum(EOF, EOF_STATE)
-        })
+      new StateAction(
+          POST_THREAD_STATE,
+          new StateDatum[]{
+              new StateDatum(THREAD, THREAD_STATE),
+              new StateDatum(EOF, EOF_STATE)
+          })
   };
 
   private static final int FETCH_LEN = FETCH.length();
@@ -272,6 +280,68 @@ public class ConcurrentTestCommandScript
   private static char[] fill(char[] chars, char c) {
     Arrays.fill(chars, c);
     return chars;
+  }
+
+  /**
+   * Runs an external application process.
+   *
+   * @param pb        ProcessBuilder for the application
+   * @param logger    if not null, command and exit status will be logged here
+   * @param appInput  if not null, data will be copied to application's stdin
+   * @param appOutput if not null, data will be captured from application's
+   *                  stdout and stderr
+   * @return application process exit value
+   */
+  static int runAppProcess(
+      ProcessBuilder pb,
+      Logger logger,
+      Reader appInput,
+      Writer appOutput) throws IOException, InterruptedException {
+    pb.redirectErrorStream(true);
+    if (logger != null) {
+      logger.info("start process: " + pb.command());
+    }
+    Process p = pb.start();
+
+    // Setup the input/output streams to the subprocess.
+    // The buffering here is arbitrary. Javadocs strongly encourage
+    // buffering, but the size needed is very dependent on the
+    // specific application being run, the size of the input
+    // provided by the caller, and the amount of output expected.
+    // Since this method is currently used only by unit tests,
+    // large-ish fixed buffer sizes have been chosen. If this
+    // method becomes used for something in production, it might
+    // be better to have the caller provide them as arguments.
+    if (appInput != null) {
+      OutputStream out =
+          new BufferedOutputStream(
+              p.getOutputStream(),
+              100 * 1024);
+      int c;
+      while ((c = appInput.read()) != -1) {
+        out.write(c);
+      }
+      out.flush();
+    }
+    if (appOutput != null) {
+      InputStream in =
+          new BufferedInputStream(
+              p.getInputStream(),
+              100 * 1024);
+      int c;
+      while ((c = in.read()) != -1) {
+        appOutput.write(c);
+      }
+      appOutput.flush();
+      in.close();
+    }
+    p.waitFor();
+
+    int status = p.exitValue();
+    if (logger != null) {
+      logger.info("exit status=" + status + " from " + pb.command());
+    }
+    return status;
   }
 
   /**
@@ -680,13 +750,13 @@ public class ConcurrentTestCommandScript
     private final Pattern symbolPattern =
         Pattern.compile("\\$((\\$)|([A-Za-z]\\w*)|\\{([A-Za-z]\\w*)\\})");
 
-    public VariableTable() {
+    VariableTable() {
       map = new HashMap<>();
     }
 
     /** Exception. */
     public class Excn extends IllegalArgumentException {
-      public Excn(String msg) {
+      Excn(String msg) {
         super(msg);
       }
     }
@@ -784,13 +854,13 @@ public class ConcurrentTestCommandScript
       public final String var;
       public final String val;
 
-      public Binding(String var, String val) {
+      Binding(String var, String val) {
         this.var = var;
         this.val = val;
       }
 
       // @param phrase has form VAR=VAL
-      public Binding(String phrase) {
+      Binding(String phrase) {
         String[] parts = splitBinding.split(phrase);
         assert parts.length == 2;
         this.var = parts[0];
@@ -802,7 +872,7 @@ public class ConcurrentTestCommandScript
     // last @var.
     private final List<Binding> deferredBindings = new ArrayList<>();
 
-    public CommandParser() {
+    CommandParser() {
       state = PRE_SETUP_STATE;
       threadId = nextThreadId = 1;
       order = 1;
@@ -1497,13 +1567,15 @@ public class ConcurrentTestCommandScript
 
       // argv[0] is found on $PATH. Working directory is the script's home
       // directory.
+      //
+      // WARNING: ProcessBuilder is security-sensitive. Its use is currently
+      // safe because this code is under "core/test". Developers must not move
+      // this code into "core/main".
       ProcessBuilder pb = new ProcessBuilder(argv);
       pb.directory(scriptDirectory);
       try {
         // direct stdout & stderr to the the threadWriter
-        int status =
-            Util.runAppProcess(
-                pb, null, null, getThreadWriter(threadId));
+        int status = runAppProcess(pb, null, null, getThreadWriter(threadId));
         if (status != 0) {
           storeMessage(threadId,
               "command " + command + ": exited with status " + status);
@@ -1995,7 +2067,7 @@ public class ConcurrentTestCommandScript
     List<String> bindings;          // VAR=VAL
     List<String> files;             // FILE
 
-    public Tool() {
+    Tool() {
       bindings = new ArrayList<>();
       files = new ArrayList<>();
     }

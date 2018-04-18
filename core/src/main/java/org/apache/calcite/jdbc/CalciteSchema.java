@@ -16,11 +16,13 @@
  */
 package org.apache.calcite.jdbc;
 
+import org.apache.calcite.linq4j.function.Experimental;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.materialize.Lattice;
 import org.apache.calcite.schema.Function;
 import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.schema.SchemaVersion;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.TableMacro;
 import org.apache.calcite.schema.impl.MaterializedViewTable;
@@ -58,19 +60,50 @@ public abstract class CalciteSchema {
   public final String name;
   /** Tables explicitly defined in this schema. Does not include tables in
    *  {@link #schema}. */
-  protected final NameMap<TableEntry> tableMap = new NameMap<>();
-  protected final NameMultimap<FunctionEntry> functionMap =
-      new NameMultimap<>();
-  protected final NameMap<LatticeEntry> latticeMap = new NameMap<>();
-  protected final NameSet functionNames = new NameSet();
-  protected final NameMap<FunctionEntry> nullaryFunctionMap = new NameMap<>();
-  protected final NameMap<CalciteSchema> subSchemaMap = new NameMap<>();
-  private ImmutableList<ImmutableList<String>> path;
+  protected final NameMap<TableEntry> tableMap;
+  protected final NameMultimap<FunctionEntry> functionMap;
+  protected final NameMap<LatticeEntry> latticeMap;
+  protected final NameSet functionNames;
+  protected final NameMap<FunctionEntry> nullaryFunctionMap;
+  protected final NameMap<CalciteSchema> subSchemaMap;
+  private List<? extends List<String>> path;
 
-  CalciteSchema(CalciteSchema parent, Schema schema, String name) {
+  protected CalciteSchema(CalciteSchema parent, Schema schema,
+      String name, NameMap<CalciteSchema> subSchemaMap,
+      NameMap<TableEntry> tableMap, NameMap<LatticeEntry> latticeMap,
+      NameMultimap<FunctionEntry> functionMap, NameSet functionNames,
+      NameMap<FunctionEntry> nullaryFunctionMap,
+      List<? extends List<String>> path) {
     this.parent = parent;
     this.schema = schema;
     this.name = name;
+    if (tableMap == null) {
+      this.tableMap = new NameMap<>();
+    } else {
+      this.tableMap = Preconditions.checkNotNull(tableMap);
+    }
+    if (latticeMap == null) {
+      this.latticeMap = new NameMap<>();
+    } else {
+      this.latticeMap = Preconditions.checkNotNull(latticeMap);
+    }
+    if (subSchemaMap == null) {
+      this.subSchemaMap = new NameMap<>();
+    } else {
+      this.subSchemaMap = Preconditions.checkNotNull(subSchemaMap);
+    }
+    if (functionMap == null) {
+      this.functionMap = new NameMultimap<>();
+      this.functionNames = new NameSet();
+      this.nullaryFunctionMap = new NameMap<>();
+    } else {
+      // If you specify functionMap, you must also specify functionNames and
+      // nullaryFunctionMap.
+      this.functionMap = Preconditions.checkNotNull(functionMap);
+      this.functionNames = Preconditions.checkNotNull(functionNames);
+      this.nullaryFunctionMap = Preconditions.checkNotNull(nullaryFunctionMap);
+    }
+    this.path = path;
   }
 
   /** Returns a sub-schema with a given name that is defined implicitly
@@ -111,6 +144,10 @@ public abstract class CalciteSchema {
   /** Adds implicit table functions to a builder. */
   protected abstract void addImplicitTablesBasedOnNullaryFunctionsToBuilder(
       ImmutableSortedMap.Builder<String, Table> builder);
+
+  /** Returns a snapshot representation of this CalciteSchema. */
+  protected abstract CalciteSchema snapshot(
+      CalciteSchema parent, SchemaVersion version);
 
   protected abstract boolean isCacheEnabled();
 
@@ -343,6 +380,25 @@ public abstract class CalciteSchema {
     return getImplicitTableBasedOnNullaryFunction(tableName, caseSensitive);
   }
 
+  /** Creates a snapshot of this CalciteSchema as of the specified time. All
+   * explicit objects in this CalciteSchema will be copied into the snapshot
+   * CalciteSchema, while the contents of the snapshot of the underlying schema
+   * should not change as specified in {@link Schema#snapshot(SchemaVersion)}.
+   * Snapshots of explicit sub schemas will be created and copied recursively.
+   *
+   * <p>Currently, to accommodate the requirement of creating tables on the fly
+   * for materializations, the snapshot will still use the same table map and
+   * lattice map as in the original CalciteSchema instead of making copies.</p>
+   *
+   * @param version The current schema version
+   *
+   * @return the schema snapshot.
+   */
+  public CalciteSchema createSnapshot(SchemaVersion version) {
+    Preconditions.checkArgument(this.isRoot(), "must be root schema");
+    return snapshot(null, version);
+  }
+
   /** Returns a subset of a map whose keys match the given string
    * case-insensitively. */
   protected static <V> NavigableMap<String, V> find(NavigableMap<String, V> map,
@@ -405,6 +461,26 @@ public abstract class CalciteSchema {
     return rootSchema;
   }
 
+  @Experimental
+  public boolean removeSubSchema(String name) {
+    return subSchemaMap.remove(name) != null;
+  }
+
+  @Experimental
+  public boolean removeTable(String name) {
+    return tableMap.remove(name) != null;
+  }
+
+  @Experimental
+  public boolean removeFunction(String name) {
+    final FunctionEntry remove = nullaryFunctionMap.remove(name);
+    if (remove == null) {
+      return false;
+    }
+    functionMap.remove(name, remove);
+    return true;
+  }
+
   /**
    * Entry in a schema, such as a table or sub-schema.
    *
@@ -432,7 +508,7 @@ public abstract class CalciteSchema {
 
   /** Membership of a table in a schema. */
   public abstract static class TableEntry extends Entry {
-    public final List<String> sqls;
+    public final ImmutableList<String> sqls;
 
     public TableEntry(CalciteSchema schema, String name,
         ImmutableList<String> sqls) {
@@ -494,8 +570,8 @@ public abstract class CalciteSchema {
       return CalciteSchema.this.isCacheEnabled();
     }
 
-    public boolean contentsHaveChangedSince(long lastCheck, long now) {
-      return schema.contentsHaveChangedSince(lastCheck, now);
+    public Schema snapshot(SchemaVersion version) {
+      throw new UnsupportedOperationException();
     }
 
     public Expression getExpression(SchemaPlus parentSchema, String name) {

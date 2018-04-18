@@ -18,6 +18,7 @@ package org.apache.calcite.rex;
 
 import org.apache.calcite.avatica.util.ByteString;
 import org.apache.calcite.avatica.util.DateTimeUtils;
+import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.sql.SqlCollation;
 import org.apache.calcite.sql.SqlKind;
@@ -25,26 +26,29 @@ import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserUtil;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.util.CompositeList;
 import org.apache.calcite.util.ConversionUtil;
+import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.NlsString;
 import org.apache.calcite.util.SaffronProperties;
+import org.apache.calcite.util.TimeString;
+import org.apache.calcite.util.TimestampString;
 import org.apache.calcite.util.Util;
-import org.apache.calcite.util.ZonelessDate;
-import org.apache.calcite.util.ZonelessDatetime;
-import org.apache.calcite.util.ZonelessTime;
-import org.apache.calcite.util.ZonelessTimestamp;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.text.SimpleDateFormat;
 import java.util.AbstractList;
 import java.util.Calendar;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TimeZone;
@@ -68,7 +72,7 @@ import java.util.TimeZone;
  * <caption>Allowable types for RexLiteral instances</caption>
  * <tr>
  * <th>TypeName</th>
- * <th>Meaing</th>
+ * <th>Meaning</th>
  * <th>Value type</th>
  * </tr>
  * <tr>
@@ -96,32 +100,63 @@ import java.util.TimeZone;
  * <tr>
  * <td>{@link SqlTypeName#DATE}</td>
  * <td>Date, for example <code>DATE '1969-04'29'</code></td>
- * <td>{@link Calendar}</td>
+ * <td>{@link Calendar};
+ *     also {@link Calendar} (UTC time zone)
+ *     and {@link Integer} (days since POSIX epoch)</td>
  * </tr>
  * <tr>
  * <td>{@link SqlTypeName#TIME}</td>
  * <td>Time, for example <code>TIME '18:37:42.567'</code></td>
- * <td>{@link Calendar}</td>
+ * <td>{@link Calendar};
+ *     also {@link Calendar} (UTC time zone)
+ *     and {@link Integer} (milliseconds since midnight)</td>
  * </tr>
  * <tr>
  * <td>{@link SqlTypeName#TIMESTAMP}</td>
  * <td>Timestamp, for example <code>TIMESTAMP '1969-04-29
  * 18:37:42.567'</code></td>
- * <td>{@link Calendar}</td>
+ * <td>{@link TimestampString};
+ *     also {@link Calendar} (UTC time zone)
+ *     and {@link Long} (milliseconds since POSIX epoch)</td>
+ * </tr>
+ * <tr>
+ * <td>{@link SqlTypeName#INTERVAL_DAY},
+ *     {@link SqlTypeName#INTERVAL_DAY_HOUR},
+ *     {@link SqlTypeName#INTERVAL_DAY_MINUTE},
+ *     {@link SqlTypeName#INTERVAL_DAY_SECOND},
+ *     {@link SqlTypeName#INTERVAL_HOUR},
+ *     {@link SqlTypeName#INTERVAL_HOUR_MINUTE},
+ *     {@link SqlTypeName#INTERVAL_HOUR_SECOND},
+ *     {@link SqlTypeName#INTERVAL_MINUTE},
+ *     {@link SqlTypeName#INTERVAL_MINUTE_SECOND},
+ *     {@link SqlTypeName#INTERVAL_SECOND}</td>
+ * <td>Interval, for example <code>INTERVAL '4:3:2' HOUR TO SECOND</code></td>
+ * <td>{@link BigDecimal};
+ *     also {@link Long} (milliseconds)</td>
+ * </tr>
+ * <tr>
+ * <td>{@link SqlTypeName#INTERVAL_YEAR},
+ *     {@link SqlTypeName#INTERVAL_YEAR_MONTH},
+ *     {@link SqlTypeName#INTERVAL_MONTH}</td>
+ * <td>Interval, for example <code>INTERVAL '2-3' YEAR TO MONTH</code></td>
+ * <td>{@link BigDecimal};
+ *     also {@link Integer} (months)</td>
  * </tr>
  * <tr>
  * <td>{@link SqlTypeName#CHAR}</td>
  * <td>Character constant, for example <code>'Hello, world!'</code>, <code>
  * ''</code>, <code>_N'Bonjour'</code>, <code>_ISO-8859-1'It''s superman!'
  * COLLATE SHIFT_JIS$ja_JP$2</code>. These are always CHAR, never VARCHAR.</td>
- * <td>{@link NlsString}</td>
+ * <td>{@link NlsString};
+ *     also {@link String}</td>
  * </tr>
  * <tr>
  * <td>{@link SqlTypeName#BINARY}</td>
  * <td>Binary constant, for example <code>X'7F34'</code>. (The number of hexits
  * must be even; see above.) These constants are always BINARY, never
  * VARBINARY.</td>
- * <td>{@link ByteBuffer}</td>
+ * <td>{@link ByteBuffer};
+ *     also {@code byte[]}</td>
  * </tr>
  * <tr>
  * <td>{@link SqlTypeName#SYMBOL}</td>
@@ -161,6 +196,10 @@ public class RexLiteral extends RexNode {
    * definitive story.
    */
   private final SqlTypeName typeName;
+
+
+  private static final ImmutableList<TimeUnit> TIME_UNITS =
+      ImmutableList.copyOf(TimeUnit.values());
 
   //~ Constructors -----------------------------------------------------------
 
@@ -213,10 +252,15 @@ public class RexLiteral extends RexNode {
     case BIGINT:
       return value instanceof BigDecimal;
     case DATE:
+      return value instanceof DateString;
     case TIME:
+      return value instanceof TimeString;
+    case TIME_WITH_LOCAL_TIME_ZONE:
+      return value instanceof TimeString;
     case TIMESTAMP:
-      return value instanceof Calendar
-          && ((Calendar) value).getTimeZone().equals(DateTimeUtils.GMT_ZONE);
+      return value instanceof TimestampString;
+    case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+      return value instanceof TimestampString;
     case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
     case INTERVAL_MONTH:
@@ -311,6 +355,66 @@ public class RexLiteral extends RexNode {
     }
   }
 
+  /** Returns a list of the time units covered by an interval type such
+   * as HOUR TO SECOND. Adds MILLISECOND if the end is SECOND, to deal with
+   * fractional seconds. */
+  private static List<TimeUnit> getTimeUnits(SqlTypeName typeName) {
+    final TimeUnit start = typeName.getStartUnit();
+    final TimeUnit end = typeName.getEndUnit();
+    final ImmutableList<TimeUnit> list =
+        TIME_UNITS.subList(start.ordinal(), end.ordinal() + 1);
+    if (end == TimeUnit.SECOND) {
+      return CompositeList.of(list, ImmutableList.of(TimeUnit.MILLISECOND));
+    }
+    return list;
+  }
+
+  private String intervalString(BigDecimal v) {
+    final List<TimeUnit> timeUnits = getTimeUnits(type.getSqlTypeName());
+    final StringBuilder b = new StringBuilder();
+    for (TimeUnit timeUnit : timeUnits) {
+      final BigDecimal[] result = v.divideAndRemainder(timeUnit.multiplier);
+      if (b.length() > 0) {
+        b.append(timeUnit.separator);
+      }
+      final int width = b.length() == 0 ? -1 : width(timeUnit); // don't pad 1st
+      pad(b, result[0].toString(), width);
+      v = result[1];
+    }
+    if (Util.last(timeUnits) == TimeUnit.MILLISECOND) {
+      while (b.toString().matches(".*\\.[0-9]*0")) {
+        if (b.toString().endsWith(".0")) {
+          b.setLength(b.length() - 2); // remove ".0"
+        } else {
+          b.setLength(b.length() - 1); // remove "0"
+        }
+      }
+    }
+    return b.toString();
+  }
+
+  private static void pad(StringBuilder b, String s, int width) {
+    if (width >= 0) {
+      for (int i = s.length(); i < width; i++) {
+        b.append('0');
+      }
+    }
+    b.append(s);
+  }
+
+  private static int width(TimeUnit timeUnit) {
+    switch (timeUnit) {
+    case MILLISECOND:
+      return 3;
+    case HOUR:
+    case MINUTE:
+    case SECOND:
+      return 2;
+    default:
+      return -1;
+    }
+  }
+
   /**
    * Prints the value this literal as a Java string constant.
    */
@@ -391,13 +495,24 @@ public class RexLiteral extends RexNode {
       pw.print(")");
       break;
     case DATE:
-      printDatetime(pw, new ZonelessDate(), value);
+      assert value instanceof DateString;
+      pw.print(value);
       break;
     case TIME:
-      printDatetime(pw, new ZonelessTime(), value);
+      assert value instanceof TimeString;
+      pw.print(value);
+      break;
+    case TIME_WITH_LOCAL_TIME_ZONE:
+      assert value instanceof TimeString;
+      pw.print(value);
       break;
     case TIMESTAMP:
-      printDatetime(pw, new ZonelessTimestamp(), value);
+      assert value instanceof TimestampString;
+      pw.print(value);
+      break;
+    case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+      assert value instanceof TimestampString;
+      pw.print(value);
       break;
     case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
@@ -437,16 +552,6 @@ public class RexLiteral extends RexNode {
       assert valueMatchesType(value, typeName, true);
       throw Util.needToImplement(typeName);
     }
-  }
-
-  private static void printDatetime(
-      PrintWriter pw,
-      ZonelessDatetime datetime,
-      Comparable value) {
-    assert value instanceof Calendar;
-    datetime.setZonelessTime(
-        ((Calendar) value).getTimeInMillis());
-    pw.print(datetime);
   }
 
   /**
@@ -520,26 +625,45 @@ public class RexLiteral extends RexNode {
     case TIME:
     case TIMESTAMP:
       String format = getCalendarFormat(typeName);
-      TimeZone tz = DateTimeUtils.GMT_ZONE;
-      Calendar cal = null;
-      if (typeName == SqlTypeName.DATE) {
-        cal =
-            DateTimeUtils.parseDateFormat(literal, format, tz);
-      } else {
+      TimeZone tz = DateTimeUtils.UTC_ZONE;
+      final Comparable v;
+      switch (typeName) {
+      case DATE:
+        final Calendar cal = DateTimeUtils.parseDateFormat(literal,
+            new SimpleDateFormat(format, Locale.ROOT),
+            tz);
+        if (cal == null) {
+          throw new AssertionError("fromJdbcString: invalid date/time value '"
+              + literal + "'");
+        }
+        v = DateString.fromCalendarFields(cal);
+        break;
+      default:
         // Allow fractional seconds for times and timestamps
-        DateTimeUtils.PrecisionTime ts =
-            DateTimeUtils.parsePrecisionDateTimeLiteral(literal, format, tz);
-        if (ts != null) {
-          cal = ts.getCalendar();
+        assert format != null;
+        final DateTimeUtils.PrecisionTime ts =
+            DateTimeUtils.parsePrecisionDateTimeLiteral(literal,
+                new SimpleDateFormat(format, Locale.ROOT), tz, -1);
+        if (ts == null) {
+          throw new AssertionError("fromJdbcString: invalid date/time value '"
+              + literal + "'");
+        }
+        switch (typeName) {
+        case TIMESTAMP:
+          v = TimestampString.fromCalendarFields(ts.getCalendar())
+              .withFraction(ts.getFraction());
+          break;
+        case TIME:
+          v = TimeString.fromCalendarFields(ts.getCalendar())
+              .withFraction(ts.getFraction());
+          break;
+        default:
+          throw new AssertionError();
         }
       }
-      if (cal == null) {
-        throw new AssertionError("fromJdbcString: invalid date/time value '"
-            + literal + "'");
-      }
-      return new RexLiteral(cal, type, typeName);
-    case SYMBOL:
+      return new RexLiteral(v, type, typeName);
 
+    case SYMBOL:
       // Symbols are for internal use
     default:
       throw new AssertionError("fromJdbcString: unsupported type");
@@ -572,11 +696,31 @@ public class RexLiteral extends RexNode {
   }
 
   /**
+   * Returns whether this literal's value is null.
+   */
+  public boolean isNull() {
+    return value == null;
+  }
+
+  /**
    * Returns the value of this literal.
+   *
+   * <p>For backwards compatibility, returns DATE. TIME and TIMESTAMP as a
+   * {@link Calendar} value in UTC time zone.
    */
   public Comparable getValue() {
     assert valueMatchesType(value, typeName, true) : value;
-    return value;
+    if (value == null) {
+      return null;
+    }
+    switch (typeName) {
+    case TIME:
+    case DATE:
+    case TIMESTAMP:
+      return getValueAs(Calendar.class);
+    default:
+      return value;
+    }
   }
 
   /**
@@ -589,17 +733,15 @@ public class RexLiteral extends RexNode {
     }
     switch (typeName) {
     case CHAR:
-      return ((NlsString) value).getValue();
+      return getValueAs(String.class);
     case DECIMAL:
-      return ((BigDecimal) value).unscaledValue().longValue();
-    case DATE:
-      return (int) (((Calendar) value).getTimeInMillis()
-          / DateTimeUtils.MILLIS_PER_DAY);
-    case TIME:
-      return (int) (((Calendar) value).getTimeInMillis()
-          % DateTimeUtils.MILLIS_PER_DAY);
     case TIMESTAMP:
-      return ((Calendar) value).getTimeInMillis();
+    case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+      return getValueAs(Long.class);
+    case DATE:
+    case TIME:
+    case TIME_WITH_LOCAL_TIME_ZONE:
+      return getValueAs(Integer.class);
     default:
       return value;
     }
@@ -617,6 +759,147 @@ public class RexLiteral extends RexNode {
     default:
       return getValue2();
     }
+  }
+
+  /** Returns the value of this literal as an instance of the specified class.
+   *
+   * <p>The following SQL types allow more than one form:
+   *
+   * <ul>
+   * <li>CHAR as {@link NlsString} or {@link String}
+   * <li>TIME as {@link TimeString},
+   *   {@link Integer} (milliseconds since midnight),
+   *   {@link Calendar} (in UTC)
+   * <li>DATE as {@link DateString},
+   *   {@link Integer} (days since 1970-01-01),
+   *   {@link Calendar}
+   * <li>TIMESTAMP as {@link TimestampString},
+   *   {@link Long} (milliseconds since 1970-01-01 00:00:00),
+   *   {@link Calendar}
+   * <li>DECIMAL as {@link BigDecimal} or {@link Long}
+   * </ul>
+   *
+   * <p>Called with {@code clazz} = {@link Comparable}, returns the value in
+   * its native form.
+   *
+   * @param clazz Desired return type
+   * @param <T> Return type
+   * @return Value of this literal in the desired type
+   */
+  public <T> T getValueAs(Class<T> clazz) {
+    if (value == null || clazz.isInstance(value)) {
+      return clazz.cast(value);
+    }
+    switch (typeName) {
+    case BINARY:
+      if (clazz == byte[].class) {
+        return clazz.cast(((ByteString) value).getBytes());
+      }
+      break;
+    case CHAR:
+      if (clazz == String.class) {
+        return clazz.cast(((NlsString) value).getValue());
+      } else if (clazz == Character.class) {
+        return clazz.cast(((NlsString) value).getValue().charAt(0));
+      }
+      break;
+    case VARCHAR:
+      if (clazz == String.class) {
+        return clazz.cast(((NlsString) value).getValue());
+      }
+      break;
+    case DECIMAL:
+      if (clazz == Long.class) {
+        return clazz.cast(((BigDecimal) value).unscaledValue().longValue());
+      }
+      // fall through
+    case BIGINT:
+    case INTEGER:
+    case SMALLINT:
+    case TINYINT:
+    case DOUBLE:
+    case REAL:
+    case FLOAT:
+      if (clazz == Long.class) {
+        return clazz.cast(((BigDecimal) value).longValue());
+      } else if (clazz == Integer.class) {
+        return clazz.cast(((BigDecimal) value).intValue());
+      } else if (clazz == Short.class) {
+        return clazz.cast(((BigDecimal) value).shortValue());
+      } else if (clazz == Byte.class) {
+        return clazz.cast(((BigDecimal) value).byteValue());
+      } else if (clazz == Double.class) {
+        return clazz.cast(((BigDecimal) value).doubleValue());
+      } else if (clazz == Float.class) {
+        return clazz.cast(((BigDecimal) value).floatValue());
+      }
+      break;
+    case DATE:
+      if (clazz == Integer.class) {
+        return clazz.cast(((DateString) value).getDaysSinceEpoch());
+      } else if (clazz == Calendar.class) {
+        return clazz.cast(((DateString) value).toCalendar());
+      }
+      break;
+    case TIME:
+      if (clazz == Integer.class) {
+        return clazz.cast(((TimeString) value).getMillisOfDay());
+      } else if (clazz == Calendar.class) {
+        // Note: Nanos are ignored
+        return clazz.cast(((TimeString) value).toCalendar());
+      }
+      break;
+    case TIME_WITH_LOCAL_TIME_ZONE:
+      if (clazz == Integer.class) {
+        // Milliseconds since 1970-01-01 00:00:00
+        return clazz.cast(((TimeString) value).getMillisOfDay());
+      }
+      break;
+    case TIMESTAMP:
+      if (clazz == Long.class) {
+        // Milliseconds since 1970-01-01 00:00:00
+        return clazz.cast(((TimestampString) value).getMillisSinceEpoch());
+      } else if (clazz == Calendar.class) {
+        // Note: Nanos are ignored
+        return clazz.cast(((TimestampString) value).toCalendar());
+      }
+      break;
+    case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+      if (clazz == Long.class) {
+        // Milliseconds since 1970-01-01 00:00:00
+        return clazz.cast(((TimestampString) value).getMillisSinceEpoch());
+      } else if (clazz == Calendar.class) {
+        // Note: Nanos are ignored
+        return clazz.cast(((TimestampString) value).toCalendar());
+      }
+      break;
+    case INTERVAL_YEAR:
+    case INTERVAL_YEAR_MONTH:
+    case INTERVAL_MONTH:
+    case INTERVAL_DAY:
+    case INTERVAL_DAY_HOUR:
+    case INTERVAL_DAY_MINUTE:
+    case INTERVAL_DAY_SECOND:
+    case INTERVAL_HOUR:
+    case INTERVAL_HOUR_MINUTE:
+    case INTERVAL_HOUR_SECOND:
+    case INTERVAL_MINUTE:
+    case INTERVAL_MINUTE_SECOND:
+    case INTERVAL_SECOND:
+      if (clazz == Integer.class) {
+        return clazz.cast(((BigDecimal) value).intValue());
+      } else if (clazz == Long.class) {
+        return clazz.cast(((BigDecimal) value).longValue());
+      } else if (clazz == String.class) {
+        return clazz.cast(intervalString(getValueAs(BigDecimal.class).abs()));
+      } else if (clazz == Boolean.class) {
+        // return whether negative
+        return clazz.cast(getValueAs(BigDecimal.class).signum() < 0);
+      }
+      break;
+    }
+    throw new AssertionError("cannot convert " + typeName
+        + " literal to " + clazz);
   }
 
   public static boolean booleanValue(RexNode node) {

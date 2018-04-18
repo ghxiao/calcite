@@ -62,11 +62,46 @@ public interface SqlConformance {
   SqlConformanceEnum PRAGMATIC_2003 = SqlConformanceEnum.PRAGMATIC_2003;
 
   /**
-   * Whether 'order by 2' is interpreted to mean 'sort by the 2nd column in
-   * the select list'.
+   * Whether to allow aliases from the {@code SELECT} clause to be used as
+   * column names in the {@code GROUP BY} clause.
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5};
+   * false otherwise.
+   */
+  boolean isGroupByAlias();
+
+  /**
+   * Whether {@code GROUP BY 2} is interpreted to mean 'group by the 2nd column
+   * in the select list'.
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5};
+   * false otherwise.
+   */
+  boolean isGroupByOrdinal();
+
+  /**
+   * Whether to allow aliases from the {@code SELECT} clause to be used as
+   * column names in the {@code HAVING} clause.
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5};
+   * false otherwise.
+   */
+  boolean isHavingAlias();
+
+  /**
+   * Whether '{@code ORDER BY 2}' is interpreted to mean 'sort by the 2nd
+   * column in the select list'.
    *
    * <p>Among the built-in conformance levels, true in
    * {@link SqlConformanceEnum#DEFAULT},
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5},
    * {@link SqlConformanceEnum#ORACLE_10},
    * {@link SqlConformanceEnum#ORACLE_12},
    * {@link SqlConformanceEnum#STRICT_92},
@@ -78,11 +113,13 @@ public interface SqlConformance {
   boolean isSortByOrdinal();
 
   /**
-   * Whether 'order by x' is interpreted to mean 'sort by the select list item
-   * whose alias is x' even if there is a column called x.
+   * Whether '{@code ORDER BY x}' is interpreted to mean 'sort by the select
+   * list item whose alias is x' even if there is a column called x.
    *
    * <p>Among the built-in conformance levels, true in
    * {@link SqlConformanceEnum#DEFAULT},
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5},
    * {@link SqlConformanceEnum#ORACLE_10},
    * {@link SqlConformanceEnum#ORACLE_12},
    * {@link SqlConformanceEnum#STRICT_92};
@@ -102,7 +139,7 @@ public interface SqlConformance {
   boolean isSortByAliasObscures();
 
   /**
-   * Whether FROM clause is required in a SELECT statement.
+   * Whether {@code FROM} clause is required in a {@code SELECT} statement.
    *
    * <p>Among the built-in conformance levels, true in
    * {@link SqlConformanceEnum#ORACLE_10},
@@ -119,6 +156,8 @@ public interface SqlConformance {
    * the parser.
    *
    * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5},
    * {@link SqlConformanceEnum#ORACLE_10};
    * {@link SqlConformanceEnum#ORACLE_12};
    * false otherwise.
@@ -126,13 +165,28 @@ public interface SqlConformance {
   boolean isBangEqualAllowed();
 
   /**
+   * Whether the "%" operator is allowed by the parser as an alternative to the
+   * {@code mod} function.
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5};
+   * false otherwise.
+   */
+  boolean isPercentRemainderAllowed();
+
+  /**
    * Whether {@code MINUS} is allowed as an alternative to {@code EXCEPT} in
    * the parser.
    *
    * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
    * {@link SqlConformanceEnum#ORACLE_10};
    * {@link SqlConformanceEnum#ORACLE_12};
    * false otherwise.
+   *
+   * <p>Note: MySQL does not support {@code MINUS} or {@code EXCEPT} (as of
+   * version 5.5).
    */
   boolean isMinusAllowed();
 
@@ -153,6 +207,7 @@ public interface SqlConformance {
    * </ul>
    *
    * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
    * {@link SqlConformanceEnum#SQL_SERVER_2008};
    * {@link SqlConformanceEnum#ORACLE_12};
    * false otherwise.
@@ -173,11 +228,84 @@ public interface SqlConformance {
    * column is not declared {@code NOT NULL}.
    *
    * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
    * {@link SqlConformanceEnum#PRAGMATIC_99},
    * {@link SqlConformanceEnum#PRAGMATIC_2003};
    * false otherwise.
    */
   boolean isInsertSubsetColumnsAllowed();
+
+  /**
+   * Whether to allow parentheses to be specified in calls to niladic functions
+   * and procedures (that is, functions and procedures with no parameters).
+   *
+   * <p>For example, {@code CURRENT_DATE} is a niladic system function. In
+   * standard SQL it must be invoked without parentheses:
+   *
+   * <blockquote><code>VALUES CURRENT_DATE</code></blockquote>
+   *
+   * <p>If {@code allowNiladicParentheses}, the following syntax is also valid:
+   *
+   * <blockquote><code>VALUES CURRENT_DATE()</code></blockquote>
+   *
+   * <p>Of the popular databases, MySQL, Apache Phoenix and VoltDB allow this
+   * behavior;
+   * Apache Hive, HSQLDB, IBM DB2, Microsoft SQL Server, Oracle, PostgreSQL do
+   * not.
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5};
+   * false otherwise.
+   */
+  boolean allowNiladicParentheses();
+
+  /**
+   * Whether to allow mixing table columns with extended columns in
+   * {@code INSERT} (or {@code UPSERT}).
+   *
+   * <p>For example, suppose that the declaration of table {@code T} has columns
+   * {@code A} and {@code B}, and you want to insert data of column
+   * {@code C INTEGER} not present in the table declaration as an extended
+   * column. You can specify the columns in an {@code INSERT} statement as
+   * follows:
+   *
+   * <blockquote>
+   *   <code>INSERT INTO T (A, B, C INTEGER) VALUES (1, 2, 3)</code>
+   * </blockquote>
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT};
+   * false otherwise.
+   */
+  boolean allowExtend();
+
+  /**
+   * Whether to allow the SQL syntax "{@code LIMIT start, count}".
+   *
+   * <p>The equivalent syntax in standard SQL is
+   * "{@code OFFSET start ROW FETCH FIRST count ROWS ONLY}",
+   * and in PostgreSQL "{@code LIMIT count OFFSET start}".
+   *
+   * <p>MySQL and CUBRID allow this behavior.
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5};
+   * false otherwise.
+   */
+  boolean isLimitStartCountAllowed();
+
+  /**
+   * Whether to allow geo-spatial extensions, including the GEOMETRY type.
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#LENIENT},
+   * {@link SqlConformanceEnum#MYSQL_5},
+   * {@link SqlConformanceEnum#SQL_SERVER_2008};
+   * false otherwise.
+   */
+  boolean allowGeometry();
 }
 
 // End SqlConformance.java

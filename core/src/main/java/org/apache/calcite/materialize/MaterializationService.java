@@ -118,14 +118,20 @@ public class MaterializationService {
     final CalciteConnection connection =
         CalciteMetaImpl.connect(schema.root(), null);
     CalciteSchema.TableEntry tableEntry;
+    // If the user says the materialization exists, first try to find a table
+    // with the name and if none can be found, lookup a view in the schema
     if (existing) {
       tableEntry = schema.getTable(suggestedTableName, true);
+      if (tableEntry == null) {
+        tableEntry = schema.getTableBasedOnNullaryFunction(suggestedTableName, true);
+      }
     } else {
       tableEntry = null;
     }
     if (tableEntry == null) {
       tableEntry = schema.getTableBySql(viewSql);
     }
+
     RelDataType rowType = null;
     if (tableEntry == null) {
       Table table = tableFactory.createTable(schema, viewSql, viewSchemaPath);
@@ -314,7 +320,7 @@ public class MaterializationService {
     final List<Prepare.Materialization> list = new ArrayList<>();
     for (MaterializationActor.Materialization materialization
         : actor.keyMap.values()) {
-      if (materialization.rootSchema == rootSchema
+      if (materialization.rootSchema.schema == rootSchema.schema
           && materialization.materializedTable != null) {
         list.add(
             new Prepare.Materialization(materialization.materializedTable,
@@ -343,6 +349,10 @@ public class MaterializationService {
       return materializationService;
     }
     return INSTANCE;
+  }
+
+  public void removeMaterialization(MaterializationKey key) {
+    actor.keyMap.remove(key);
   }
 
   /**
@@ -379,7 +389,8 @@ public class MaterializationService {
           new AbstractQueryable<Object>() {
             public Enumerator<Object> enumerator() {
               final DataContext dataContext =
-                  Schemas.createDataContext(connection);
+                  Schemas.createDataContext(connection,
+                      calciteSignature.rootSchema.plus());
               return calciteSignature.enumerable(dataContext).enumerator();
             }
 
@@ -397,7 +408,8 @@ public class MaterializationService {
 
             public Iterator<Object> iterator() {
               final DataContext dataContext =
-                  Schemas.createDataContext(connection);
+                  Schemas.createDataContext(connection,
+                      calciteSignature.rootSchema.plus());
               return calciteSignature.enumerable(dataContext).iterator();
             }
           });

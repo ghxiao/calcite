@@ -18,8 +18,11 @@ package org.apache.calcite.jdbc;
 
 import org.apache.calcite.schema.Function;
 import org.apache.calcite.schema.Schema;
+import org.apache.calcite.schema.SchemaVersion;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.TableMacro;
+import org.apache.calcite.util.NameMap;
+import org.apache.calcite.util.NameMultimap;
 import org.apache.calcite.util.NameSet;
 
 import com.google.common.cache.CacheBuilder;
@@ -30,6 +33,7 @@ import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -45,7 +49,17 @@ class CachingCalciteSchema extends CalciteSchema {
 
   /** Creates a CachingCalciteSchema. */
   CachingCalciteSchema(CalciteSchema parent, Schema schema, String name) {
-    super(parent, schema, name);
+    this(parent, schema, name, null, null, null, null, null, null, null);
+  }
+
+  private CachingCalciteSchema(CalciteSchema parent, Schema schema,
+      String name, NameMap<CalciteSchema> subSchemaMap,
+      NameMap<TableEntry> tableMap, NameMap<LatticeEntry> latticeMap,
+      NameMultimap<FunctionEntry> functionMap, NameSet functionNames,
+      NameMap<FunctionEntry> nullaryFunctionMap,
+      List<? extends List<String>> path) {
+    super(parent, schema, name, subSchemaMap, tableMap, latticeMap,
+        functionMap, functionNames, nullaryFunctionMap, path);
     this.implicitSubSchemaCache =
         new AbstractCached<SubSchemaCache>() {
           public SubSchemaCache build() {
@@ -201,6 +215,35 @@ class CachingCalciteSchema extends CalciteSchema {
     return null;
   }
 
+  protected CalciteSchema snapshot(CalciteSchema parent, SchemaVersion version) {
+    CalciteSchema snapshot = new CachingCalciteSchema(parent,
+        schema.snapshot(version), name, null, tableMap, latticeMap,
+        functionMap, functionNames, nullaryFunctionMap, getPath());
+    for (CalciteSchema subSchema : subSchemaMap.map().values()) {
+      CalciteSchema subSchemaSnapshot = subSchema.snapshot(snapshot, version);
+      snapshot.subSchemaMap.put(subSchema.name, subSchemaSnapshot);
+    }
+    return snapshot;
+  }
+
+  @Override public boolean removeTable(String name) {
+    if (cache) {
+      final long now = System.nanoTime();
+      implicitTableCache.enable(now, false);
+      implicitTableCache.enable(now, true);
+    }
+    return super.removeTable(name);
+  }
+
+  @Override public boolean removeFunction(String name) {
+    if (cache) {
+      final long now = System.nanoTime();
+      implicitFunctionCache.enable(now, false);
+      implicitFunctionCache.enable(now, true);
+    }
+    return super.removeFunction(name);
+  }
+
   /** Strategy for caching the value of an object and re-creating it if its
    * value is out of date as of a given timestamp.
    *
@@ -218,20 +261,21 @@ class CachingCalciteSchema extends CalciteSchema {
   }
 
   /** Implementation of {@link CachingCalciteSchema.Cached}
-   * that drives from {@link CachingCalciteSchema#cache}. */
+   * that drives from {@link CachingCalciteSchema#cache}.
+   *
+   * @param <T> element type */
   private abstract class AbstractCached<T> implements Cached<T> {
     T t;
-    long checked = Long.MIN_VALUE;
+    boolean built = false;
 
     public T get(long now) {
       if (!CachingCalciteSchema.this.cache) {
         return build();
       }
-      if (checked == Long.MIN_VALUE
-          || schema.contentsHaveChangedSince(checked, now)) {
+      if (!built) {
         t = build();
       }
-      checked = now;
+      built = true;
       return t;
     }
 
@@ -239,7 +283,7 @@ class CachingCalciteSchema extends CalciteSchema {
       if (!enabled) {
         t = null;
       }
-      checked = Long.MIN_VALUE;
+      built = false;
     }
   }
 

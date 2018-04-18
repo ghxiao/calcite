@@ -17,9 +17,12 @@
 # limitations under the License.
 #
 language: java
-jdk:
-  - oraclejdk8
-  - oraclejdk7
+matrix:
+  fast_finish: true
+  include:
+    - env: IMAGE=maven:3-jdk-10
+    - env: IMAGE=maven:3-jdk-9
+    - env: IMAGE=maven:3-jdk-8
 branches:
   only:
     - master
@@ -27,13 +30,23 @@ branches:
     - javadoc
     - /^branch-.*$/
     - /^[0-9]+-.*$/
+env:
+  global:
+  - DOCKERRUN="docker run -it --rm -v $PWD:/src -v $HOME/.m2:/root/.m2 -w /src"
+services:
+  - docker
+before_install:
+  - docker pull $IMAGE
 install:
-  - mvn install -DskipTests=true -Dmaven.javadoc.skip=true -B -V
+  # Print the Maven version, skip tests and javadoc
+  - $DOCKERRUN $IMAGE mvn install -DskipTests=true -Dmaven.javadoc.skip=true -Djavax.net.ssl.trustStorePassword=changeit -B -V
 script:
-  - mvn -Dsurefire.useFile=false test
+  # Print surefire output to the console instead of files
+  - unset _JAVA_OPTIONS
+  - $DOCKERRUN $IMAGE mvn -Dsurefire.useFile=false -Dsurefire.parallel= -Djavax.net.ssl.trustStorePassword=changeit test
 git:
   depth: 10000
-sudo: false
+sudo: required
 cache:
   directories:
     - $HOME/.m2

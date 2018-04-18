@@ -34,7 +34,6 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.test.JdbcTest;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.util.ImmutableBitSet;
-import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
 
@@ -43,6 +42,8 @@ import org.junit.Test;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.Arrays;
+
+import static org.apache.calcite.test.Matchers.isLinux;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
@@ -138,14 +139,13 @@ public class RelWriterTest {
                 final RelDataType bigIntType =
                     cluster.getTypeFactory().createSqlType(SqlTypeName.BIGINT);
                 LogicalAggregate aggregate =
-                    LogicalAggregate.create(filter, false,
-                        ImmutableBitSet.of(0), null,
+                    LogicalAggregate.create(filter, ImmutableBitSet.of(0), null,
                         ImmutableList.of(
                             AggregateCall.create(SqlStdOperatorTable.COUNT,
-                                true, ImmutableList.of(1), -1, bigIntType,
-                                "c"),
+                                true, false, ImmutableList.of(1), -1,
+                                bigIntType, "c"),
                             AggregateCall.create(SqlStdOperatorTable.COUNT,
-                                false, ImmutableList.<Integer>of(), -1,
+                                false, false, ImmutableList.<Integer>of(), -1,
                                 bigIntType, "d")));
                 aggregate.explain(writer);
                 return writer.asString();
@@ -179,9 +179,8 @@ public class RelWriterTest {
               }
             });
 
-    assertThat(Util.toLinux(s),
-        is(
-            "LogicalAggregate(group=[{0}], agg#0=[COUNT(DISTINCT $1)], agg#1=[COUNT()])\n"
+    assertThat(s,
+        isLinux("LogicalAggregate(group=[{0}], agg#0=[COUNT(DISTINCT $1)], agg#1=[COUNT()])\n"
             + "  LogicalFilter(condition=[=($1, 10)])\n"
             + "    LogicalTableScan(table=[[hr, emps]])\n"));
   }

@@ -20,6 +20,7 @@ import org.apache.calcite.avatica.util.Spaces;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlWriter;
+import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.util.SqlBuilder;
 import org.apache.calcite.sql.util.SqlString;
 import org.apache.calcite.util.Unsafe;
@@ -131,7 +132,7 @@ public class SqlPrettyWriter implements SqlWriter {
    * Bean holding the default property values.
    */
   private static final Bean DEFAULT_BEAN =
-      new SqlPrettyWriter(SqlDialect.DUMMY).getBean();
+      new SqlPrettyWriter(AnsiSqlDialect.DEFAULT).getBean();
   protected static final String NL = System.getProperty("line.separator");
 
   //~ Instance fields --------------------------------------------------------
@@ -363,22 +364,23 @@ public class SqlPrettyWriter implements SqlWriter {
    * <ul>
    * <li>If set to "false":
    *
-   * <pre>
+   * <blockquote><pre>
    * SELECT
    *     A as A
    *         B as B
    *         C as C
    *     D
-   * </pre>
+   * </pre></blockquote>
+   *
    * <li>If set to "true":
    *
-   * <pre>
+   * <blockquote><pre>
    * SELECT
    *     A as A
    *     B as B
    *     C as C
    *     D
-   * </pre>
+   * </pre></blockquote>
    * </ul>
    */
   public void setSelectListExtraIndentFlag(boolean b) {
@@ -912,47 +914,7 @@ public class SqlPrettyWriter implements SqlWriter {
     if (fetch == null && offset == null) {
       return;
     }
-    if (dialect.supportsOffsetFetch()) {
-      if (offset != null) {
-        this.newlineAndIndent();
-        final Frame offsetFrame =
-            this.startList(FrameTypeEnum.OFFSET);
-        this.keyword("OFFSET");
-        offset.unparse(this, -1, -1);
-        this.keyword("ROWS");
-        this.endList(offsetFrame);
-      }
-      if (fetch != null) {
-        this.newlineAndIndent();
-        final Frame fetchFrame =
-            this.startList(FrameTypeEnum.FETCH);
-        this.keyword("FETCH");
-        this.keyword("NEXT");
-        fetch.unparse(this, -1, -1);
-        this.keyword("ROWS");
-        this.keyword("ONLY");
-        this.endList(fetchFrame);
-      }
-    } else {
-      // Dialect does not support OFFSET/FETCH clause.
-      // Assume it uses LIMIT/OFFSET.
-      if (fetch != null) {
-        this.newlineAndIndent();
-        final Frame fetchFrame =
-            this.startList(FrameTypeEnum.FETCH);
-        this.keyword("LIMIT");
-        fetch.unparse(this, -1, -1);
-        this.endList(fetchFrame);
-      }
-      if (offset != null) {
-        this.newlineAndIndent();
-        final Frame offsetFrame =
-            this.startList(FrameTypeEnum.OFFSET);
-        this.keyword("OFFSET");
-        offset.unparse(this, -1, -1);
-        this.endList(offsetFrame);
-      }
-    }
+    dialect.unparseOffsetFetch(this, offset, fetch);
   }
 
   public Frame startFunCall(String funName) {

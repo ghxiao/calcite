@@ -23,6 +23,9 @@ public enum SqlConformanceEnum implements SqlConformance {
   /** Calcite's default SQL behavior. */
   DEFAULT,
 
+  /** Conformance value that allows just about everything. */
+  LENIENT,
+
   /** Conformance value that instructs Calcite to use SQL semantics strictly
    * consistent with the SQL:92 standard. */
   STRICT_92,
@@ -35,6 +38,10 @@ public enum SqlConformanceEnum implements SqlConformance {
    * consistent with the SQL:99 standard, but ignoring its more
    * inconvenient or controversial dicta. */
   PRAGMATIC_99,
+
+  /** Conformance value that instructs Calcite to use SQL semantics
+   * consistent with MySQL version 5.x. */
+  MYSQL_5,
 
   /** Conformance value that instructs Calcite to use SQL semantics
    * consistent with Oracle version 10. */
@@ -59,9 +66,41 @@ public enum SqlConformanceEnum implements SqlConformance {
    * consistent with Microsoft SQL Server version 2008. */
   SQL_SERVER_2008;
 
+  public boolean isGroupByAlias() {
+    switch (this) {
+    case LENIENT:
+    case MYSQL_5:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  public boolean isGroupByOrdinal() {
+    switch (this) {
+    case LENIENT:
+    case MYSQL_5:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  public boolean isHavingAlias() {
+    switch (this) {
+    case LENIENT:
+    case MYSQL_5:
+      return true;
+    default:
+      return false;
+    }
+  }
+
   public boolean isSortByOrdinal() {
     switch (this) {
     case DEFAULT:
+    case LENIENT:
+    case MYSQL_5:
     case ORACLE_10:
     case ORACLE_12:
     case STRICT_92:
@@ -77,6 +116,8 @@ public enum SqlConformanceEnum implements SqlConformance {
   public boolean isSortByAlias() {
     switch (this) {
     case DEFAULT:
+    case LENIENT:
+    case MYSQL_5:
     case ORACLE_10:
     case ORACLE_12:
     case STRICT_92:
@@ -106,6 +147,8 @@ public enum SqlConformanceEnum implements SqlConformance {
 
   public boolean isBangEqualAllowed() {
     switch (this) {
+    case LENIENT:
+    case MYSQL_5:
     case ORACLE_10:
     case ORACLE_12:
       return true;
@@ -116,6 +159,7 @@ public enum SqlConformanceEnum implements SqlConformance {
 
   @Override public boolean isMinusAllowed() {
     switch (this) {
+    case LENIENT:
     case ORACLE_10:
     case ORACLE_12:
       return true;
@@ -124,8 +168,19 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
+  @Override public boolean isPercentRemainderAllowed() {
+    switch (this) {
+    case LENIENT:
+    case MYSQL_5:
+      return true;
+    default:
+      return false;
+    }
+  }
+
   public boolean isApplyAllowed() {
     switch (this) {
+    case LENIENT:
     case SQL_SERVER_2008:
     case ORACLE_12:
       return true;
@@ -136,6 +191,7 @@ public enum SqlConformanceEnum implements SqlConformance {
 
   public boolean isInsertSubsetColumnsAllowed() {
     switch (this) {
+    case LENIENT:
     case PRAGMATIC_99:
     case PRAGMATIC_2003:
       return true;
@@ -144,6 +200,45 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
+  public boolean allowNiladicParentheses() {
+    switch (this) {
+    case LENIENT:
+    case MYSQL_5:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  public boolean allowExtend() {
+    switch (this) {
+    case LENIENT:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  public boolean isLimitStartCountAllowed() {
+    switch (this) {
+    case LENIENT:
+    case MYSQL_5:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  public boolean allowGeometry() {
+    switch (this) {
+    case LENIENT:
+    case MYSQL_5:
+    case SQL_SERVER_2008:
+      return true;
+    default:
+      return false;
+    }
+  }
 }
 
 // End SqlConformanceEnum.java

@@ -20,6 +20,7 @@ import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.runtime.PredicateImpl;
 import org.apache.calcite.schema.ExtensibleTable;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.ModifiableViewTable;
@@ -51,7 +52,7 @@ class TableNamespace extends AbstractNamespace {
     this.extendedFields = ImmutableList.copyOf(fields);
   }
 
-  public TableNamespace(SqlValidatorImpl validator, SqlValidatorTable table) {
+  TableNamespace(SqlValidatorImpl validator, SqlValidatorTable table) {
     this(validator, table, ImmutableList.<RelDataTypeField>of());
   }
 
@@ -59,7 +60,7 @@ class TableNamespace extends AbstractNamespace {
     if (extendedFields.isEmpty()) {
       return table.getRowType();
     }
-    final RelDataTypeFactory.FieldInfoBuilder builder =
+    final RelDataTypeFactory.Builder builder =
         validator.getTypeFactory().builder();
     builder.addAll(table.getRowType().getFieldList());
     builder.addAll(extendedFields);
@@ -150,8 +151,8 @@ class TableNamespace extends AbstractNamespace {
 
         if (!extType.equals(baseType)) {
           // Get the extended column node that failed validation.
-          final Predicate<SqlNode> nameMatches = new Predicate<SqlNode>() {
-            @Override public boolean apply(SqlNode sqlNode) {
+          final Predicate<SqlNode> nameMatches = new PredicateImpl<SqlNode>() {
+            @Override public boolean test(SqlNode sqlNode) {
               if (sqlNode instanceof SqlIdentifier) {
                 final SqlIdentifier identifier = (SqlIdentifier) sqlNode;
                 return Util.last(identifier.names).equals(extendedField.getName());

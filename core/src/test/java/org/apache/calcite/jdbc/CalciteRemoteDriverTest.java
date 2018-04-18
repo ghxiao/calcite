@@ -92,8 +92,7 @@ public class CalciteRemoteDriverTest {
       CalcitePrepareImpl.DEBUG ? Util.printWriter(System.out)
           : new PrintWriter(new StringWriter());
 
-  private static final CalciteAssert.ConnectionFactory
-  REMOTE_CONNECTION_FACTORY =
+  private static final CalciteAssert.ConnectionFactory REMOTE_CONNECTION_FACTORY =
       new CalciteAssert.ConnectionFactory() {
         public Connection createConnection() throws SQLException {
           return remoteConnection;
@@ -275,7 +274,7 @@ public class CalciteRemoteDriverTest {
   @Test public void testRemoteTypeInfo() throws Exception {
     CalciteAssert.hr().with(REMOTE_CONNECTION_FACTORY)
         .metaData(GET_TYPEINFO)
-        .returns(CalciteAssert.checkResultCount(is(42)));
+        .returns(CalciteAssert.checkResultCount(is(45)));
   }
 
   @Test public void testRemoteTableTypes() throws Exception {
@@ -384,22 +383,22 @@ public class CalciteRemoteDriverTest {
    * specification */
   @Test public void testTableB5() {
     SqlType[] columns = {
-      SqlType.TINYINT, SqlType.SMALLINT, SqlType.INTEGER, SqlType.BIGINT,
-      SqlType.REAL, SqlType.FLOAT, SqlType.DOUBLE, SqlType.DECIMAL,
-      SqlType.NUMERIC, SqlType.BIT, SqlType.BOOLEAN, SqlType.CHAR,
-      SqlType.VARCHAR, SqlType.LONGVARCHAR, SqlType.BINARY, SqlType.VARBINARY,
-      SqlType.LONGVARBINARY, SqlType.DATE, SqlType.TIME, SqlType.TIMESTAMP,
-      SqlType.ARRAY, SqlType.BLOB, SqlType.CLOB, SqlType.STRUCT, SqlType.REF,
-      SqlType.DATALINK, SqlType.JAVA_OBJECT, SqlType.ROWID, SqlType.NCHAR,
-      SqlType.NVARCHAR, SqlType.LONGNVARCHAR, SqlType.NCLOB, SqlType.SQLXML
+        SqlType.TINYINT, SqlType.SMALLINT, SqlType.INTEGER, SqlType.BIGINT,
+        SqlType.REAL, SqlType.FLOAT, SqlType.DOUBLE, SqlType.DECIMAL,
+        SqlType.NUMERIC, SqlType.BIT, SqlType.BOOLEAN, SqlType.CHAR,
+        SqlType.VARCHAR, SqlType.LONGVARCHAR, SqlType.BINARY, SqlType.VARBINARY,
+        SqlType.LONGVARBINARY, SqlType.DATE, SqlType.TIME, SqlType.TIMESTAMP,
+        SqlType.ARRAY, SqlType.BLOB, SqlType.CLOB, SqlType.STRUCT, SqlType.REF,
+        SqlType.DATALINK, SqlType.JAVA_OBJECT, SqlType.ROWID, SqlType.NCHAR,
+        SqlType.NVARCHAR, SqlType.LONGNVARCHAR, SqlType.NCLOB, SqlType.SQLXML
     };
     Class[] rows = {
-      String.class, BigDecimal.class, Boolean.class, Byte.class, Short.class,
-      Integer.class, Long.class, Float.class, Double.class, byte[].class,
-      BigInteger.class, java.sql.Date.class, Time.class, Timestamp.class,
-      Array.class, Blob.class, Clob.class, Struct.class, Ref.class,
-      URL.class, Class.class, RowId.class, NClob.class, SQLXML.class,
-      Calendar.class, java.util.Date.class
+        String.class, BigDecimal.class, Boolean.class, Byte.class, Short.class,
+        Integer.class, Long.class, Float.class, Double.class, byte[].class,
+        BigInteger.class, java.sql.Date.class, Time.class, Timestamp.class,
+        Array.class, Blob.class, Clob.class, Struct.class, Ref.class,
+        URL.class, Class.class, RowId.class, NClob.class, SQLXML.class,
+        Calendar.class, java.util.Date.class
     };
     for (Class row : rows) {
       final String s = row == Date.class ? row.getName() : row.getSimpleName();
@@ -422,15 +421,15 @@ public class CalciteRemoteDriverTest {
    * specification */
   @Test public void testTableB6() {
     SqlType[] columns = {
-      SqlType.TINYINT, SqlType.SMALLINT, SqlType.INTEGER, SqlType.BIGINT,
-      SqlType.REAL, SqlType.FLOAT, SqlType.DOUBLE, SqlType.DECIMAL,
-      SqlType.NUMERIC, SqlType.BIT, SqlType.BOOLEAN, SqlType.CHAR,
-      SqlType.VARCHAR, SqlType.LONGVARCHAR, SqlType.BINARY, SqlType.VARBINARY,
-      SqlType.LONGVARBINARY, SqlType.DATE, SqlType.TIME, SqlType.TIMESTAMP,
-      SqlType.CLOB, SqlType.BLOB, SqlType.ARRAY, SqlType.REF,
-      SqlType.DATALINK, SqlType.STRUCT, SqlType.JAVA_OBJECT, SqlType.ROWID,
-      SqlType.NCHAR, SqlType.NVARCHAR, SqlType.LONGNVARCHAR, SqlType.NCLOB,
-      SqlType.SQLXML
+        SqlType.TINYINT, SqlType.SMALLINT, SqlType.INTEGER, SqlType.BIGINT,
+        SqlType.REAL, SqlType.FLOAT, SqlType.DOUBLE, SqlType.DECIMAL,
+        SqlType.NUMERIC, SqlType.BIT, SqlType.BOOLEAN, SqlType.CHAR,
+        SqlType.VARCHAR, SqlType.LONGVARCHAR, SqlType.BINARY, SqlType.VARBINARY,
+        SqlType.LONGVARBINARY, SqlType.DATE, SqlType.TIME, SqlType.TIMESTAMP,
+        SqlType.CLOB, SqlType.BLOB, SqlType.ARRAY, SqlType.REF,
+        SqlType.DATALINK, SqlType.STRUCT, SqlType.JAVA_OBJECT, SqlType.ROWID,
+        SqlType.NCHAR, SqlType.NVARCHAR, SqlType.LONGNVARCHAR, SqlType.NCLOB,
+        SqlType.SQLXML
     };
     final PrintWriter out =
         CalcitePrepareImpl.DEBUG
@@ -453,13 +452,13 @@ public class CalciteRemoteDriverTest {
   @Test public void testRemoteStatementExecute() throws Exception {
     final Statement statement = remoteConnection.createStatement();
     final boolean status = statement.execute("values (1, 2), (3, 4), (5, 6)");
+    assertThat(status, is(true));
     final ResultSet resultSet = statement.getResultSet();
     int n = 0;
     while (resultSet.next()) {
       ++n;
     }
     assertThat(n, equalTo(3));
-
   }
 
   @Test(expected = SQLException.class)
@@ -469,7 +468,15 @@ public class CalciteRemoteDriverTest {
 
   @Test(expected = SQLException.class)
   public void testAvaticaStatementException() throws Exception {
-    remoteConnection.createStatement().getMoreResults();
+    try (Statement statement = remoteConnection.createStatement()) {
+      statement.setCursorName("foo");
+    }
+  }
+
+  @Test public void testAvaticaStatementGetMoreResults() throws Exception {
+    try (Statement statement = remoteConnection.createStatement()) {
+      assertThat(statement.getMoreResults(), is(false));
+    }
   }
 
   @Test public void testRemoteExecute() throws Exception {

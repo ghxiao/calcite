@@ -383,9 +383,8 @@ public abstract class SqlUtil {
     return null;
   }
 
-  private static Iterator<SqlOperator>
-  filterOperatorRoutinesByKind(Iterator<SqlOperator> routines,
-      final SqlKind sqlKind) {
+  private static Iterator<SqlOperator> filterOperatorRoutinesByKind(
+      Iterator<SqlOperator> routines, final SqlKind sqlKind) {
     return Iterators.filter(routines,
         new PredicateImpl<SqlOperator>() {
           public boolean test(SqlOperator input) {
@@ -874,12 +873,10 @@ public abstract class SqlUtil {
   /** If a node is "AS", returns the underlying expression; otherwise returns
    * the node. */
   public static SqlNode stripAs(SqlNode node) {
-    switch (node.getKind()) {
-    case AS:
+    if (node != null && node.getKind() == SqlKind.AS) {
       return ((SqlCall) node).operand(0);
-    default:
-      return node;
     }
+    return node;
   }
 
   /** Returns a list of ancestors of {@code predicate} within a given

@@ -23,6 +23,18 @@ package org.apache.calcite.sql.validate;
  * and behaves the same as in {@link SqlConformanceEnum#DEFAULT}.
  */
 public abstract class SqlAbstractConformance implements SqlConformance {
+  public boolean isGroupByAlias() {
+    return SqlConformanceEnum.DEFAULT.isGroupByAlias();
+  }
+
+  public boolean isGroupByOrdinal() {
+    return SqlConformanceEnum.DEFAULT.isGroupByOrdinal();
+  }
+
+  public boolean isHavingAlias() {
+    return SqlConformanceEnum.DEFAULT.isHavingAlias();
+  }
+
   public boolean isSortByOrdinal() {
     return SqlConformanceEnum.DEFAULT.isSortByOrdinal();
   }
@@ -55,6 +67,25 @@ public abstract class SqlAbstractConformance implements SqlConformance {
     return SqlConformanceEnum.DEFAULT.isInsertSubsetColumnsAllowed();
   }
 
+  public boolean allowNiladicParentheses() {
+    return SqlConformanceEnum.DEFAULT.allowNiladicParentheses();
+  }
+
+  public boolean allowExtend() {
+    return SqlConformanceEnum.DEFAULT.allowExtend();
+  }
+
+  public boolean isLimitStartCountAllowed() {
+    return SqlConformanceEnum.DEFAULT.isLimitStartCountAllowed();
+  }
+
+  public boolean isPercentRemainderAllowed() {
+    return SqlConformanceEnum.DEFAULT.isPercentRemainderAllowed();
+  }
+
+  public boolean allowGeometry() {
+    return SqlConformanceEnum.DEFAULT.allowGeometry();
+  }
 }
 
 // End SqlAbstractConformance.java

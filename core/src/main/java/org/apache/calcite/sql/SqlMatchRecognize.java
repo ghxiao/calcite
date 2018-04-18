@@ -29,7 +29,7 @@ import java.util.List;
 import javax.annotation.Nonnull;
 
 /**
- * SqlNode for Match_recognize clause
+ * SqlNode for MATCH_RECOGNIZE clause.
  */
 public class SqlMatchRecognize extends SqlCall {
   public static final int OPERAND_TABLE_REF = 0;
@@ -38,6 +38,20 @@ public class SqlMatchRecognize extends SqlCall {
   public static final int OPERAND_STRICT_END = 3;
   public static final int OPERAND_PATTERN_DEFINES = 4;
   public static final int OPERAND_MEASURES = 5;
+  public static final int OPERAND_AFTER = 6;
+  public static final int OPERAND_SUBSET = 7;
+  public static final int OPERAND_ROWS_PER_MATCH = 8;
+  public static final int OPERAND_PARTITION_BY = 9;
+  public static final int OPERAND_ORDER_BY = 10;
+  public static final int OPERAND_INTERVAL = 11;
+
+  public static final SqlPrefixOperator SKIP_TO_FIRST =
+      new SqlPrefixOperator("SKIP TO FIRST", SqlKind.SKIP_TO_FIRST, 20, null,
+          null, null);
+
+  public static final SqlPrefixOperator SKIP_TO_LAST =
+      new SqlPrefixOperator("SKIP TO LAST", SqlKind.SKIP_TO_LAST, 20, null,
+          null, null);
 
   //~ Instance fields -------------------------------------------
 
@@ -47,11 +61,19 @@ public class SqlMatchRecognize extends SqlCall {
   private SqlLiteral strictEnd;
   private SqlNodeList patternDefList;
   private SqlNodeList measureList;
+  private SqlNode after;
+  private SqlNodeList subsetList;
+  private SqlLiteral rowsPerMatch;
+  private SqlNodeList partitionList;
+  private SqlNodeList orderList;
+  private SqlLiteral interval;
 
   /** Creates a SqlMatchRecognize. */
   public SqlMatchRecognize(SqlParserPos pos, SqlNode tableRef, SqlNode pattern,
       SqlLiteral strictStart, SqlLiteral strictEnd, SqlNodeList patternDefList,
-      SqlNodeList measureList) {
+      SqlNodeList measureList, SqlNode after, SqlNodeList subsetList,
+      SqlLiteral rowsPerMatch, SqlNodeList partitionList,
+      SqlNodeList orderList, SqlLiteral interval) {
     super(pos);
     this.tableRef = Preconditions.checkNotNull(tableRef);
     this.pattern = Preconditions.checkNotNull(pattern);
@@ -60,6 +82,14 @@ public class SqlMatchRecognize extends SqlCall {
     this.patternDefList = Preconditions.checkNotNull(patternDefList);
     Preconditions.checkArgument(patternDefList.size() > 0);
     this.measureList = Preconditions.checkNotNull(measureList);
+    this.after = after;
+    this.subsetList = subsetList;
+    Preconditions.checkArgument(rowsPerMatch == null
+        || rowsPerMatch.value instanceof RowsPerMatchOption);
+    this.rowsPerMatch = rowsPerMatch;
+    this.partitionList = Preconditions.checkNotNull(partitionList);
+    this.orderList = Preconditions.checkNotNull(orderList);
+    this.interval = interval;
   }
 
   // ~ Methods
@@ -74,7 +104,7 @@ public class SqlMatchRecognize extends SqlCall {
 
   @Override public List<SqlNode> getOperandList() {
     return ImmutableNullableList.of(tableRef, pattern, strictStart, strictEnd,
-        patternDefList, measureList);
+        patternDefList, measureList, after, subsetList, partitionList, orderList);
   }
 
   @Override public void unparse(SqlWriter writer, int leftPrec,
@@ -107,6 +137,26 @@ public class SqlMatchRecognize extends SqlCall {
     case OPERAND_MEASURES:
       measureList = Preconditions.checkNotNull((SqlNodeList) operand);
       break;
+    case OPERAND_AFTER:
+      after = operand;
+      break;
+    case OPERAND_SUBSET:
+      subsetList = (SqlNodeList) operand;
+      break;
+    case OPERAND_ROWS_PER_MATCH:
+      rowsPerMatch = (SqlLiteral) operand;
+      Preconditions.checkArgument(rowsPerMatch == null
+          || rowsPerMatch.value instanceof RowsPerMatchOption);
+      break;
+    case OPERAND_PARTITION_BY:
+      partitionList = (SqlNodeList) operand;
+      break;
+    case OPERAND_ORDER_BY:
+      orderList = (SqlNodeList) operand;
+      break;
+    case OPERAND_INTERVAL:
+      interval = (SqlLiteral) operand;
+      break;
     default:
       throw new AssertionError(i);
     }
@@ -136,6 +186,78 @@ public class SqlMatchRecognize extends SqlCall {
     return measureList;
   }
 
+  public SqlNode getAfter() {
+    return after;
+  }
+
+  public SqlNodeList getSubsetList() {
+    return subsetList;
+  }
+
+  public SqlLiteral getRowsPerMatch() {
+    return rowsPerMatch;
+  }
+
+  public SqlNodeList getPartitionList() {
+    return partitionList;
+  }
+
+  public SqlNodeList getOrderList() {
+    return orderList;
+  }
+
+  public SqlLiteral getInterval() {
+    return interval;
+  }
+
+  /**
+   * Options for {@code ROWS PER MATCH}.
+   */
+  public enum RowsPerMatchOption {
+    ONE_ROW("ONE ROW PER MATCH"),
+    ALL_ROWS("ALL ROWS PER MATCH");
+
+    private final String sql;
+
+    RowsPerMatchOption(String sql) {
+      this.sql = sql;
+    }
+
+    @Override public String toString() {
+      return sql;
+    }
+
+    public SqlLiteral symbol(SqlParserPos pos) {
+      return SqlLiteral.createSymbol(this, pos);
+    }
+  }
+
+  /**
+   * Options for {@code AFTER MATCH} clause.
+   */
+  public enum AfterOption {
+    SKIP_TO_NEXT_ROW("SKIP TO NEXT ROW"),
+    SKIP_PAST_LAST_ROW("SKIP PAST LAST ROW");
+
+    private final String sql;
+
+    AfterOption(String sql) {
+      this.sql = sql;
+    }
+
+    @Override public String toString() {
+      return sql;
+    }
+
+    /**
+     * Creates a parse-tree node representing an occurrence of this symbol
+     * at a particular position in the parsed text.
+     */
+    public SqlLiteral symbol(SqlParserPos pos) {
+      return SqlLiteral.createSymbol(this, pos);
+    }
+  }
+
   /**
    * An operator describing a MATCH_RECOGNIZE specification.
    */
@@ -156,11 +278,13 @@ public class SqlMatchRecognize extends SqlCall {
         SqlParserPos pos,
         SqlNode... operands) {
       assert functionQualifier == null;
-      assert operands.length == 6;
+      assert operands.length == 12;
 
       return new SqlMatchRecognize(pos, operands[0], operands[1],
           (SqlLiteral) operands[2], (SqlLiteral) operands[3],
-          (SqlNodeList) operands[4], (SqlNodeList) operands[5]);
+          (SqlNodeList) operands[4], (SqlNodeList) operands[5], operands[6],
+          (SqlNodeList) operands[7], (SqlLiteral) operands[8],
+          (SqlNodeList) operands[9], (SqlNodeList) operands[10], (SqlLiteral) operands[11]);
     }
 
     @Override public <R> void acceptCall(
@@ -200,12 +324,40 @@ public class SqlMatchRecognize extends SqlCall {
       pattern.tableRef.unparse(writer, 0, 0);
       final SqlWriter.Frame mrFrame = writer.startFunCall("MATCH_RECOGNIZE");
 
+      if (pattern.partitionList != null && pattern.partitionList.size() > 0) {
+        writer.newlineAndIndent();
+        writer.sep("PARTITION BY");
+        final SqlWriter.Frame partitionFrame = writer.startList("", "");
+        pattern.partitionList.unparse(writer, 0, 0);
+        writer.endList(partitionFrame);
+      }
+
+      if (pattern.orderList != null && pattern.orderList.size() > 0) {
+        writer.newlineAndIndent();
+        writer.sep("ORDER BY");
+        final SqlWriter.Frame orderFrame =
+            writer.startList(SqlWriter.FrameTypeEnum.ORDER_BY_LIST);
+        unparseListClause(writer, pattern.orderList);
+        writer.endList(orderFrame);
+      }
+
       if (pattern.measureList != null && pattern.measureList.size() > 0) {
         writer.newlineAndIndent();
         writer.sep("MEASURES");
         final SqlWriter.Frame measureFrame = writer.startList("", "");
         pattern.measureList.unparse(writer, 0, 0);
         writer.endList(measureFrame);
+      }
+
+      if (pattern.rowsPerMatch != null) {
+        writer.newlineAndIndent();
+        pattern.rowsPerMatch.unparse(writer, 0, 0);
+      }
+
+      if (pattern.after != null) {
+        writer.newlineAndIndent();
+        writer.sep("AFTER MATCH");
+        pattern.after.unparse(writer, 0, 0);
       }
 
       writer.newlineAndIndent();
@@ -220,6 +372,18 @@ public class SqlMatchRecognize extends SqlCall {
         writer.sep("$");
       }
       writer.endList(patternFrame);
+      if (pattern.interval != null) {
+        writer.sep("WITHIN");
+        pattern.interval.unparse(writer, 0, 0);
+      }
+
+      if (pattern.subsetList != null && pattern.subsetList.size() > 0) {
+        writer.newlineAndIndent();
+        writer.sep("SUBSET");
+        SqlWriter.Frame subsetFrame = writer.startList("", "");
+        pattern.subsetList.unparse(writer, 0, 0);
+        writer.endList(subsetFrame);
+      }
 
       writer.newlineAndIndent();
       writer.sep("DEFINE");

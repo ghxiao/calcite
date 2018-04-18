@@ -33,6 +33,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.Converter;
 import org.apache.calcite.rel.convert.ConverterRule;
 import org.apache.calcite.rel.convert.TraitMatchingRule;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.util.Pair;
@@ -307,7 +308,8 @@ public class HepPlanner extends AbstractRelOptPlanner {
         instruction.ruleSet.add(converter);
         if (!instruction.guaranteed) {
           // Add a TraitMatchingRule to work bottom-up
-          instruction.ruleSet.add(new TraitMatchingRule(converter));
+          instruction.ruleSet.add(
+              new TraitMatchingRule(converter, RelFactories.LOGICAL_BUILDER));
         }
       }
     }
@@ -358,6 +360,33 @@ public class HepPlanner extends AbstractRelOptPlanner {
     LOGGER.trace("Leaving group");
   }
 
+  private int depthFirstApply(Iterator<HepRelVertex> iter,
+      Collection<RelOptRule> rules,
+      boolean forceConversions, int nMatches) {
+    while (iter.hasNext()) {
+      HepRelVertex vertex = iter.next();
+      for (RelOptRule rule : rules) {
+        HepRelVertex newVertex =
+            applyRule(rule, vertex, forceConversions);
+        if (newVertex == null || newVertex == vertex) {
+          continue;
+        }
+        ++nMatches;
+        if (nMatches >= currentProgram.matchLimit) {
+          return nMatches;
+        }
+        // To the extent possible, pick up where we left
+        // off; have to create a new iterator because old
+        // one was invalidated by transformation.
+        Iterator<HepRelVertex> depthIter = getGraphIterator(newVertex);
+        nMatches = depthFirstApply(depthIter, rules, forceConversions,
+            nMatches);
+        break;
+      }
+    }
+    return nMatches;
+  }
+
   private void applyRules(
       Collection<RelOptRule> rules,
       boolean forceConversions) {
@@ -370,41 +399,49 @@ public class HepPlanner extends AbstractRelOptPlanner {
     LOGGER.trace("Applying rule set {}", rules);
 
     boolean fullRestartAfterTransformation =
-        currentProgram.matchOrder != HepMatchOrder.ARBITRARY;
+        currentProgram.matchOrder != HepMatchOrder.ARBITRARY
+        && currentProgram.matchOrder != HepMatchOrder.DEPTH_FIRST;
 
     int nMatches = 0;
 
-    boolean fixpoint;
+    boolean fixedPoint;
     do {
       Iterator<HepRelVertex> iter = getGraphIterator(root);
-      fixpoint = true;
+      fixedPoint = true;
       while (iter.hasNext()) {
         HepRelVertex vertex = iter.next();
         for (RelOptRule rule : rules) {
           HepRelVertex newVertex =
               applyRule(rule, vertex, forceConversions);
-          if (newVertex != null) {
-            ++nMatches;
-            if (nMatches >= currentProgram.matchLimit) {
-              return;
-            }
-            if (fullRestartAfterTransformation) {
-              iter = getGraphIterator(root);
-            } else {
-              // To the extent possible, pick up where we left
-              // off; have to create a new iterator because old
-              // one was invalidated by transformation.
-              iter = getGraphIterator(newVertex);
-
-              // Remember to go around again since we're
-              // skipping some stuff.
-              fixpoint = false;
-            }
-            break;
+          if (newVertex == null || newVertex == vertex) {
+            continue;
           }
+          ++nMatches;
+          if (nMatches >= currentProgram.matchLimit) {
+            return;
+          }
+          if (fullRestartAfterTransformation) {
+            iter = getGraphIterator(root);
+          } else {
+            // To the extent possible, pick up where we left
+            // off; have to create a new iterator because old
+            // one was invalidated by transformation.
+            iter = getGraphIterator(newVertex);
+            if (currentProgram.matchOrder == HepMatchOrder.DEPTH_FIRST) {
+              nMatches =
+                  depthFirstApply(iter, rules, forceConversions, nMatches);
+              if (nMatches >= currentProgram.matchLimit) {
+                return;
+              }
+            }
+            // Remember to go around again since we're
+            // skipping some stuff.
+            fixedPoint = false;
+          }
+          break;
         }
       }
-    } while (!fixpoint);
+    } while (!fixedPoint);
   }
 
   private Iterator<HepRelVertex> getGraphIterator(HepRelVertex start) {
@@ -418,39 +455,52 @@ public class HepPlanner extends AbstractRelOptPlanner {
     // better optimizer performance.
     collectGarbage();
 
-    if (currentProgram.matchOrder == HepMatchOrder.ARBITRARY) {
+    switch (currentProgram.matchOrder) {
+    case ARBITRARY:
+    case DEPTH_FIRST:
       return DepthFirstIterator.of(graph, start).iterator();
-    }
 
-    assert start == root;
+    case TOP_DOWN:
+      assert start == root;
+      // see above
+/*
+        collectGarbage();
+*/
+      return TopologicalOrderIterator.of(graph).iterator();
 
-    // see above
+    case BOTTOM_UP:
+    default:
+      assert start == root;
+
+      // see above
 /*
         collectGarbage();
 */
 
-    Iterable<HepRelVertex> iter =
-        TopologicalOrderIterator.of(graph);
-
-    if (currentProgram.matchOrder == HepMatchOrder.TOP_DOWN) {
-      return iter.iterator();
+      // TODO jvs 4-Apr-2006:  enhance TopologicalOrderIterator
+      // to support reverse walk.
+      final List<HepRelVertex> list = new ArrayList<>();
+      for (HepRelVertex vertex : TopologicalOrderIterator.of(graph)) {
+        list.add(vertex);
+      }
+      Collections.reverse(list);
+      return list.iterator();
     }
+  }
 
-    // TODO jvs 4-Apr-2006:  enhance TopologicalOrderIterator
-    // to support reverse walk.
-    assert currentProgram.matchOrder == HepMatchOrder.BOTTOM_UP;
-    final List<HepRelVertex> list = new ArrayList<>();
-    for (HepRelVertex vertex : iter) {
-      list.add(vertex);
-    }
-    Collections.reverse(list);
-    return list.iterator();
+  /** Returns whether the vertex is valid. */
+  private boolean belongsToDag(HepRelVertex vertex) {
+    String digest = vertex.getCurrentRel().getDigest();
+    return mapDigestToVertex.get(digest) != null;
   }
 
   private HepRelVertex applyRule(
       RelOptRule rule,
       HepRelVertex vertex,
       boolean forceConversions) {
+    if (!belongsToDag(vertex)) {
+      return null;
+    }
     RelTrait parentTrait = null;
     List<RelNode> parents = null;
     if (rule instanceof ConverterRule) {
@@ -640,7 +690,7 @@ public class HepPlanner extends AbstractRelOptPlanner {
       bestRel = call.getResults().get(0);
     } else {
       RelOptCost bestCost = null;
-      final RelMetadataQuery mq = RelMetadataQuery.instance();
+      final RelMetadataQuery mq = call.getMetadataQuery();
       for (RelNode rel : call.getResults()) {
         RelOptCost thisCost = getCost(rel, mq);
         if (LOGGER.isTraceEnabled()) {
@@ -762,6 +812,9 @@ public class HepPlanner extends AbstractRelOptPlanner {
       rel = rel.copy(rel.getTraitSet(), newInputs);
       onCopy(oldRel, rel);
     }
+    // Compute digest first time we add to DAG,
+    // otherwise can't get equivVertex for common sub-expression
+    rel.recomputeDigest();
 
     // try to find equivalent rel only if DAG is allowed
     if (!noDAG) {
@@ -783,6 +836,7 @@ public class HepPlanner extends AbstractRelOptPlanner {
       graph.addEdge(newVertex, (HepRelVertex) input);
     }
 
+    nTransformations++;
     return newVertex;
   }
 
@@ -836,15 +890,15 @@ public class HepPlanner extends AbstractRelOptPlanner {
     if (mapDigestToVertex.get(oldDigest) == vertex) {
       mapDigestToVertex.remove(oldDigest);
     }
-    String newDigest = rel.recomputeDigest();
-    if (mapDigestToVertex.get(newDigest) == null) {
-      mapDigestToVertex.put(newDigest, vertex);
-    } else {
-      // REVIEW jvs 5-Apr-2006:  Could this lead us to
-      // miss common subexpressions?  When called from
-      // addRelToGraph, we'll check after this method returns,
-      // but what about the other callers?
-    }
+    String newDigest = rel.getDigest();
+    // When a transformation happened in one rule apply, support
+    // vertex2 replace vertex1, but the current relNode of
+    // vertex1 and vertex2 is same,
+    // then the digest is also same. but we can't remove vertex2,
+    // otherwise the digest will be removed wrongly in the mapDigestToVertex
+    //  when collectGC
+    // so it must update the digest that map to vertex
+    mapDigestToVertex.put(newDigest, vertex);
     if (rel != vertex.getCurrentRel()) {
       vertex.replaceRel(rel);
     }
@@ -939,7 +993,7 @@ public class HepPlanner extends AbstractRelOptPlanner {
 
     assertNoCycles();
 
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = root.getCluster().getMetadataQuery();
     final StringBuilder sb = new StringBuilder();
     sb.append("\nBreadth-first from root:  {\n");
     for (HepRelVertex vertex : BreadthFirstIterator.of(graph, root)) {

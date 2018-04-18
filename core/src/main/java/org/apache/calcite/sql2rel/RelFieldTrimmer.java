@@ -43,6 +43,7 @@ import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rel.type.RelDataTypeImpl;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCorrelVariable;
+import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexFieldAccess;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
@@ -187,7 +188,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     final ImmutableBitSet.Builder fieldsUsedBuilder = fieldsUsed.rebuild();
 
     // Fields that define the collation cannot be discarded.
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     final ImmutableList<RelCollation> collations = mq.collations(input);
     for (RelCollation collation : collations) {
       for (RelFieldCollation fieldCollation : collation.getFieldCollations()) {
@@ -302,7 +303,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
                   && v.getType().getFieldCount() == mapping.getSourceCount()) {
                 final int old = fieldAccess.getField().getIndex();
                 final int new_ = mapping.getTarget(old);
-                final RelDataTypeFactory.FieldInfoBuilder typeBuilder =
+                final RelDataTypeFactory.Builder typeBuilder =
                     relBuilder.getTypeFactory().builder();
                 for (int target : Util.range(mapping.getTargetCount())) {
                   typeBuilder.add(
@@ -525,6 +526,12 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
         && inputMapping.isIdentity()
         && fieldsUsed.cardinality() == fieldCount) {
       return result(sort, Mappings.createIdentity(fieldCount));
+    }
+
+    // leave the Sort unchanged in case we have dynamic limits
+    if (sort.offset instanceof RexDynamicParam
+        || sort.fetch instanceof RexDynamicParam) {
+      return result(sort, inputMapping);
     }
 
     relBuilder.push(newInput);
@@ -866,15 +873,16 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
             : relBuilder.field(Mappings.apply(inputMapping, aggCall.filterArg));
         RelBuilder.AggCall newAggCall =
             relBuilder.aggregateCall(aggCall.getAggregation(),
-                aggCall.isDistinct(), filterArg, aggCall.name, args);
+                aggCall.isDistinct(), aggCall.isApproximate(),
+                filterArg, aggCall.name, args);
         mapping.set(j, groupCount + indicatorCount + newAggCallList.size());
         newAggCallList.add(newAggCall);
       }
       ++j;
     }
 
-    final RelBuilder.GroupKey groupKey = relBuilder.groupKey(newGroupSet,
-        aggregate.indicator, newGroupSets);
+    final RelBuilder.GroupKey groupKey =
+        relBuilder.groupKey(newGroupSet, newGroupSets);
     relBuilder.aggregate(groupKey, newAggCallList);
 
     return result(relBuilder.build(), mapping);

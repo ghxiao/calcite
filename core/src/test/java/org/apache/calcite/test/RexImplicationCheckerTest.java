@@ -17,40 +17,50 @@
 package org.apache.calcite.test;
 
 import org.apache.calcite.DataContext;
+import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RexImplicationChecker;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
+import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexExecutorImpl;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexSimplify;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Schemas;
 import org.apache.calcite.server.CalciteServerStatement;
 import org.apache.calcite.sql.SqlCollation;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.tools.Frameworks;
+import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.NlsString;
+import org.apache.calcite.util.TimeString;
+import org.apache.calcite.util.TimestampString;
 import org.apache.calcite.util.Util;
 
-import org.junit.Ignore;
-import org.junit.Test;
+import com.google.common.collect.ImmutableList;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import org.junit.Test;
 
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
-import java.util.Calendar;
+
+import static org.hamcrest.core.Is.is;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Unit tests for {@link RexImplicationChecker}.
@@ -134,7 +144,7 @@ public class RexImplicationCheckerTest {
     final RexNode bEqTrue = f.eq(f.bl, f.rexBuilder.makeLiteral(true));
     final RexNode bEqFalse = f.eq(f.bl, f.rexBuilder.makeLiteral(false));
 
-    //TODO: Need to support false => true
+    // TODO: Need to support false => true
     //f.checkImplies(bEqFalse, bEqTrue);
     f.checkNotImplies(bEqTrue, bEqFalse);
   }
@@ -176,35 +186,46 @@ public class RexImplicationCheckerTest {
     f.checkImplies(node1, node1);
   }
 
-  @Ignore("work in progress")
   @Test public void testSimpleDate() {
     final Fixture f = new Fixture();
-    final Calendar instance = Util.calendar();
-    final RexNode node1 = f.ge(f.dt, f.rexBuilder.makeDateLiteral(instance));
-    final RexNode node2 = f.eq(f.dt, f.rexBuilder.makeDateLiteral(instance));
-
+    final DateString d = DateString.fromCalendarFields(Util.calendar());
+    final RexNode node1 = f.ge(f.d, f.dateLiteral(d));
+    final RexNode node2 = f.eq(f.d, f.dateLiteral(d));
     f.checkImplies(node2, node1);
     f.checkNotImplies(node1, node2);
+
+    final DateString dBeforeEpoch1 = DateString.fromDaysSinceEpoch(-12345);
+    final DateString dBeforeEpoch2 = DateString.fromDaysSinceEpoch(-123);
+    final RexNode nodeBe1 = f.lt(f.d, f.dateLiteral(dBeforeEpoch1));
+    final RexNode nodeBe2 = f.lt(f.d, f.dateLiteral(dBeforeEpoch2));
+    f.checkImplies(nodeBe1, nodeBe2);
+    f.checkNotImplies(nodeBe2, nodeBe1);
   }
 
-  @Ignore("work in progress")
   @Test public void testSimpleTimeStamp() {
     final Fixture f = new Fixture();
-    final Calendar calendar = Util.calendar();
-    final RexNode node1 = f.le(f.ts, f.timestampLiteral(calendar));
-    final RexNode node2 = f.le(f.ts, f.timestampLiteral(calendar));
-
+    final TimestampString ts =
+        TimestampString.fromCalendarFields(Util.calendar());
+    final RexNode node1 = f.lt(f.ts, f.timestampLiteral(ts));
+    final RexNode node2 = f.le(f.ts, f.timestampLiteral(ts));
     f.checkImplies(node1, node2);
     f.checkNotImplies(node2, node1);
+
+    final TimestampString tsBeforeEpoch1 =
+        TimestampString.fromMillisSinceEpoch(-1234567890L);
+    final TimestampString tsBeforeEpoch2 =
+        TimestampString.fromMillisSinceEpoch(-1234567L);
+    final RexNode nodeBe1 = f.lt(f.ts, f.timestampLiteral(tsBeforeEpoch1));
+    final RexNode nodeBe2 = f.lt(f.ts, f.timestampLiteral(tsBeforeEpoch2));
+    f.checkImplies(nodeBe1, nodeBe2);
+    f.checkNotImplies(nodeBe2, nodeBe1);
   }
 
-  @Ignore("work in progress")
   @Test public void testSimpleTime() {
     final Fixture f = new Fixture();
-    final Calendar calendar = Util.calendar();
-    final RexNode node1 = f.le(f.ts, f.timeLiteral(calendar));
-    final RexNode node2 = f.le(f.ts, f.timeLiteral(calendar));
-
+    final TimeString t = TimeString.fromCalendarFields(Util.calendar());
+    final RexNode node1 = f.lt(f.t, f.timeLiteral(t));
+    final RexNode node2 = f.le(f.t, f.timeLiteral(t));
     f.checkImplies(node1, node2);
     f.checkNotImplies(node2, node1);
   }
@@ -320,6 +341,85 @@ public class RexImplicationCheckerTest {
     f.checkNotImplies(f.gt(f.i, f.literal(10)), iIsNull);
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2041">[CALCITE-2041]
+   * When simplifying a nullable expression, allow the result to change type to
+   * NOT NULL</a> and
+   * {@link org.apache.calcite.rex.RexUtil.ExprSimplifier#matchNullability}. */
+  @Test public void testSimplifyCastMatchNullability() {
+    final Fixture f = new Fixture();
+    final RexUtil.ExprSimplifier defaultSimplifier =
+        new RexUtil.ExprSimplifier(f.simplify, true);
+    final RexUtil.ExprSimplifier nonMatchingNullabilitySimplifier =
+        new RexUtil.ExprSimplifier(f.simplify, false);
+
+    // The cast is nullable, while the literal is not nullable. When we simplify
+    // it, we end up with the literal. If defaultSimplifier is used, a CAST is
+    // introduced on top of the expression, as nullability of the new expression
+    // does not match the nullability of the original one. If
+    // nonMatchingNullabilitySimplifier is used, the CAST is not added and the
+    // simplified expression only consists of the literal.
+    final RexNode e = f.cast(f.intRelDataType, f.literal(2014));
+    assertThat(defaultSimplifier.apply(e).toString(),
+        is("CAST(2014):JavaType(class java.lang.Integer)"));
+    assertThat(nonMatchingNullabilitySimplifier.apply(e).toString(),
+        is("2014"));
+
+    // In this case, the cast is not nullable. Thus, in both cases, the
+    // simplified expression only consists of the literal.
+    RelDataType notNullIntRelDataType = f.typeFactory.createJavaType(int.class);
+    final RexNode e2 = f.cast(notNullIntRelDataType,
+        f.cast(notNullIntRelDataType, f.literal(2014)));
+    assertThat(defaultSimplifier.apply(e2).toString(),
+        is("2014"));
+    assertThat(nonMatchingNullabilitySimplifier.apply(e2).toString(),
+        is("2014"));
+  }
+
+  /** Test case for simplifier of ceil and floor. */
+  @Test public void testSimplifyFloor() {
+    final ImmutableList<TimeUnitRange> timeUnitRanges =
+        ImmutableList.of(TimeUnitRange.WEEK,
+            TimeUnitRange.YEAR, TimeUnitRange.QUARTER, TimeUnitRange.MONTH, TimeUnitRange.DAY,
+            TimeUnitRange.HOUR, TimeUnitRange.MINUTE, TimeUnitRange.SECOND,
+            TimeUnitRange.MILLISECOND, TimeUnitRange.MICROSECOND);
+    final Fixture f = new Fixture();
+    final RexUtil.ExprSimplifier defaultSimplifier =
+        new RexUtil.ExprSimplifier(f.simplify, true);
+
+    final RexNode literalTs =
+        f.timestampLiteral(new TimestampString("2010-10-10 00:00:00"));
+    // Exclude WEEK as it is only used for the negative tests
+    for (int i = 1; i < timeUnitRanges.size(); i++) {
+      final RexNode innerFloorCall = f.rexBuilder.makeCall(
+          SqlStdOperatorTable.CEIL, literalTs,
+          f.rexBuilder.makeFlag(timeUnitRanges.get(i)));
+      for (int j = 1; j <= i; j++) {
+        final RexNode outerFloorCall = f.rexBuilder.makeCall(
+            SqlStdOperatorTable.FLOOR, innerFloorCall,
+            f.rexBuilder.makeFlag(timeUnitRanges.get(j)));
+        final RexCall simplifiedExpr = (RexCall) defaultSimplifier.apply(outerFloorCall);
+        assertThat(simplifiedExpr.getKind(), is(SqlKind.FLOOR));
+        assertThat(((RexLiteral) simplifiedExpr.getOperands().get(1)).getValue().toString(),
+            is(timeUnitRanges.get(j).toString()));
+        assertThat(simplifiedExpr.getOperands().get(0).toString(), is(literalTs.toString()));
+      }
+    }
+    // Negative test
+    for (int i = timeUnitRanges.size() - 1; i >= 0; i--) {
+      final RexNode innerFloorCall = f.rexBuilder.makeCall(
+          SqlStdOperatorTable.FLOOR, literalTs,
+          f.rexBuilder.makeFlag(timeUnitRanges.get(i)));
+      for (int j = timeUnitRanges.size() - 1; j > i; j--) {
+        final RexNode outerFloorCall = f.rexBuilder.makeCall(
+            SqlStdOperatorTable.CEIL, innerFloorCall,
+            f.rexBuilder.makeFlag(timeUnitRanges.get(j)));
+        final RexCall simplifiedExpr = (RexCall) defaultSimplifier.apply(outerFloorCall);
+        assertThat(simplifiedExpr.toString(), is(outerFloorCall.toString()));
+      }
+    }
+  }
+
   /** Contains all the nourishment a test case could possibly need.
    *
    * <p>We put the data in here, rather than as fields in the test case, so that
@@ -338,22 +438,22 @@ public class RexImplicationCheckerTest {
     public final RelDataType floatDataType;
     public final RelDataType charDataType;
     public final RelDataType dateDataType;
-    public final RelDataType timeStampDataType;
+    public final RelDataType timestampDataType;
     public final RelDataType timeDataType;
     public final RelDataType stringDataType;
 
-    public final RexNode bl;
-    public final RexNode i;
-    public final RexNode dec;
-    public final RexNode lg;
-    public final RexNode sh;
-    public final RexNode by;
-    public final RexNode fl;
-    public final RexNode dt;
-    public final RexNode ch;
-    public final RexNode ts;
-    public final RexNode t;
-    public final RexNode str;
+    public final RexNode bl; // a field of Java type "Boolean"
+    public final RexNode i; // a field of Java type "Integer"
+    public final RexNode dec; // a field of Java type "Double"
+    public final RexNode lg; // a field of Java type "Long"
+    public final RexNode sh; // a  field of Java type "Short"
+    public final RexNode by; // a field of Java type "Byte"
+    public final RexNode fl; // a field of Java type "Float" (not a SQL FLOAT)
+    public final RexNode d; // a field of Java type "Date"
+    public final RexNode ch; // a field of Java type "Character"
+    public final RexNode ts; // a field of Java type "Timestamp"
+    public final RexNode t; // a field of Java type "Time"
+    public final RexNode str; // a field of Java type "String"
 
     public final RexImplicationChecker checker;
     public final RelDataType rowType;
@@ -372,7 +472,7 @@ public class RexImplicationCheckerTest {
       floatDataType = typeFactory.createJavaType(Float.class);
       charDataType = typeFactory.createJavaType(Character.class);
       dateDataType = typeFactory.createJavaType(Date.class);
-      timeStampDataType = typeFactory.createJavaType(Timestamp.class);
+      timestampDataType = typeFactory.createJavaType(Timestamp.class);
       timeDataType = typeFactory.createJavaType(Time.class);
       stringDataType = typeFactory.createJavaType(String.class);
 
@@ -384,8 +484,8 @@ public class RexImplicationCheckerTest {
       by = ref(5, byteDataType);
       fl = ref(6, floatDataType);
       ch = ref(7, charDataType);
-      dt = ref(8, dateDataType);
-      ts = ref(9, timeStampDataType);
+      d = ref(8, dateDataType);
+      ts = ref(9, timestampDataType);
       t = ref(10, timeDataType);
       str = ref(11, stringDataType);
 
@@ -399,7 +499,7 @@ public class RexImplicationCheckerTest {
           .add("float", floatDataType)
           .add("char", charDataType)
           .add("date", dateDataType)
-          .add("timestamp", timeStampDataType)
+          .add("timestamp", timestampDataType)
           .add("time", timeDataType)
           .add("string", stringDataType)
           .build();
@@ -412,14 +512,16 @@ public class RexImplicationCheckerTest {
                 SchemaPlus rootSchema,
                 CalciteServerStatement statement) {
               DataContext dataContext =
-                  Schemas.createDataContext(statement.getConnection());
+                  Schemas.createDataContext(statement.getConnection(), rootSchema);
               holder.set(new RexExecutorImpl(dataContext));
               return null;
             }
           });
 
       executor = holder.get();
-      simplify = new RexSimplify(rexBuilder, false, executor);
+      simplify =
+          new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, false,
+              executor);
       checker = new RexImplicationChecker(rexBuilder, executor, rowType);
     }
 
@@ -491,14 +593,26 @@ public class RexImplicationCheckerTest {
           new NlsString(z, null, SqlCollation.COERCIBLE));
     }
 
-    public RexNode timestampLiteral(Calendar calendar) {
-      return rexBuilder.makeTimestampLiteral(
-          calendar, timeStampDataType.getPrecision());
+    public RexNode dateLiteral(DateString d) {
+      return rexBuilder.makeDateLiteral(d);
     }
 
-    public RexNode timeLiteral(Calendar calendar) {
-      return rexBuilder.makeTimestampLiteral(
-          calendar, timeDataType.getPrecision());
+    public RexNode timestampLiteral(TimestampString ts) {
+      return rexBuilder.makeTimestampLiteral(ts,
+          timestampDataType.getPrecision());
+    }
+
+    public RexNode timestampLocalTzLiteral(TimestampString ts) {
+      return rexBuilder.makeTimestampWithLocalTimeZoneLiteral(ts,
+          timestampDataType.getPrecision());
+    }
+
+    public RexNode timeLiteral(TimeString t) {
+      return rexBuilder.makeTimeLiteral(t, timeDataType.getPrecision());
+    }
+
+    public RexNode cast(RelDataType type, RexNode exp) {
+      return rexBuilder.makeCast(type, exp, true);
     }
 
     void checkImplies(RexNode node1, RexNode node2) {

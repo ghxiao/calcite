@@ -145,7 +145,8 @@ public class RelMdSize implements MetadataHandler<BuiltInMetadata.Size> {
       } else {
         d = 0;
         for (ImmutableList<RexLiteral> literals : rel.getTuples()) {
-          d += typeValueSize(field.getType(), literals.get(i).getValue());
+          d += typeValueSize(field.getType(),
+              literals.get(i).getValueAs(Comparable.class));
         }
         d /= rel.getTuples().size();
       }
@@ -280,6 +281,7 @@ public class RelMdSize implements MetadataHandler<BuiltInMetadata.Size> {
     case DECIMAL:
     case DATE:
     case TIME:
+    case TIME_WITH_LOCAL_TIME_ZONE:
     case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
     case INTERVAL_MONTH:
@@ -288,6 +290,7 @@ public class RelMdSize implements MetadataHandler<BuiltInMetadata.Size> {
     case DOUBLE:
     case FLOAT: // sic
     case TIMESTAMP:
+    case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
     case INTERVAL_DAY:
     case INTERVAL_DAY_HOUR:
     case INTERVAL_DAY_MINUTE:
@@ -338,6 +341,7 @@ public class RelMdSize implements MetadataHandler<BuiltInMetadata.Size> {
     case REAL:
     case DATE:
     case TIME:
+    case TIME_WITH_LOCAL_TIME_ZONE:
     case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
     case INTERVAL_MONTH:
@@ -345,6 +349,7 @@ public class RelMdSize implements MetadataHandler<BuiltInMetadata.Size> {
     case BIGINT:
     case DOUBLE:
     case TIMESTAMP:
+    case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
     case INTERVAL_DAY:
     case INTERVAL_DAY_HOUR:
     case INTERVAL_DAY_MINUTE:
@@ -372,7 +377,8 @@ public class RelMdSize implements MetadataHandler<BuiltInMetadata.Size> {
     case INPUT_REF:
       return inputColumnSizes.get(((RexInputRef) node).getIndex());
     case LITERAL:
-      return typeValueSize(node.getType(), ((RexLiteral) node).getValue());
+      return typeValueSize(node.getType(),
+          ((RexLiteral) node).getValueAs(Comparable.class));
     default:
       if (node instanceof RexCall) {
         RexCall call = (RexCall) node;

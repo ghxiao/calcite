@@ -18,6 +18,8 @@ package org.apache.calcite.prepare;
 
 import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.config.CalciteConnectionConfig;
+import org.apache.calcite.config.CalciteConnectionConfigImpl;
+import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.plan.Context;
 import org.apache.calcite.plan.RelOptCluster;
@@ -49,6 +51,7 @@ import org.apache.calcite.tools.FrameworkConfig;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.Planner;
 import org.apache.calcite.tools.Program;
+import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelConversionException;
 import org.apache.calcite.tools.ValidationException;
 import org.apache.calcite.util.Pair;
@@ -57,6 +60,7 @@ import org.apache.calcite.util.Util;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.Properties;
 
 /** Implementation of {@link org.apache.calcite.tools.Planner}. */
 public class PlannerImpl implements Planner {
@@ -68,6 +72,7 @@ public class PlannerImpl implements Planner {
   private final ImmutableList<RelTraitDef> traitDefs;
 
   private final SqlParser.Config parserConfig;
+  private final SqlToRelConverter.Config sqlToRelConverterConfig;
   private final SqlRexConvertletTable convertletTable;
 
   private State state;
@@ -96,6 +101,7 @@ public class PlannerImpl implements Planner {
     this.operatorTable = config.getOperatorTable();
     this.programs = config.getPrograms();
     this.parserConfig = config.getParserConfig();
+    this.sqlToRelConverterConfig = config.getSqlToRelConverterConfig();
     this.state = State.STATE_0_CLOSED;
     this.traitDefs = config.getTraitDefs();
     this.convertletTable = config.getConvertletTable();
@@ -224,14 +230,20 @@ public class PlannerImpl implements Planner {
     final RexBuilder rexBuilder = createRexBuilder();
     final RelOptCluster cluster = RelOptCluster.create(planner, rexBuilder);
     final SqlToRelConverter.Config config = SqlToRelConverter.configBuilder()
-        .withTrimUnusedFields(false).withConvertTableAccess(false).build();
+        .withConfig(sqlToRelConverterConfig)
+        .withTrimUnusedFields(false)
+        .withConvertTableAccess(false)
+        .build();
     final SqlToRelConverter sqlToRelConverter =
         new SqlToRelConverter(new ViewExpanderImpl(), validator,
             createCatalogReader(), cluster, convertletTable, config);
     root =
         sqlToRelConverter.convertQuery(validatedSqlNode, false, true);
     root = root.withRel(sqlToRelConverter.flattenTypes(root.rel, true));
-    root = root.withRel(RelDecorrelator.decorrelateQuery(root.rel));
+    final RelBuilder relBuilder =
+        config.getRelBuilderFactory().create(cluster, null);
+    root = root.withRel(
+        RelDecorrelator.decorrelateQuery(root.rel, relBuilder));
     state = State.STATE_5_CONVERTED;
     return root;
   }
@@ -260,15 +272,22 @@ public class PlannerImpl implements Planner {
 
       final RexBuilder rexBuilder = createRexBuilder();
       final RelOptCluster cluster = RelOptCluster.create(planner, rexBuilder);
-      final SqlToRelConverter.Config config = SqlToRelConverter.configBuilder()
-          .withTrimUnusedFields(false).withConvertTableAccess(false).build();
+      final SqlToRelConverter.Config config = SqlToRelConverter
+          .configBuilder()
+          .withConfig(sqlToRelConverterConfig)
+          .withTrimUnusedFields(false)
+          .withConvertTableAccess(false)
+          .build();
       final SqlToRelConverter sqlToRelConverter =
           new SqlToRelConverter(new ViewExpanderImpl(), validator,
               catalogReader, cluster, convertletTable, config);
 
       root = sqlToRelConverter.convertQuery(validatedSqlNode, true, false);
       root = root.withRel(sqlToRelConverter.flattenTypes(root.rel, true));
-      root = root.withRel(RelDecorrelator.decorrelateQuery(root.rel));
+      final RelBuilder relBuilder =
+          config.getRelBuilderFactory().create(cluster, null);
+      root = root.withRel(
+          RelDecorrelator.decorrelateQuery(root.rel, relBuilder));
 
       return PlannerImpl.this.root;
     }
@@ -276,12 +295,23 @@ public class PlannerImpl implements Planner {
 
   // CalciteCatalogReader is stateless; no need to store one
   private CalciteCatalogReader createCatalogReader() {
-    SchemaPlus rootSchema = rootSchema(defaultSchema);
+    final SchemaPlus rootSchema = rootSchema(defaultSchema);
+    final Context context = config.getContext();
+    final CalciteConnectionConfig connectionConfig;
+
+    if (context != null) {
+      connectionConfig = context.unwrap(CalciteConnectionConfig.class);
+    } else {
+      Properties properties = new Properties();
+      properties.setProperty(CalciteConnectionProperty.CASE_SENSITIVE.camelName(),
+              String.valueOf(parserConfig.caseSensitive()));
+      connectionConfig = new CalciteConnectionConfigImpl(properties);
+    }
+
     return new CalciteCatalogReader(
         CalciteSchema.from(rootSchema),
-        parserConfig.caseSensitive(),
         CalciteSchema.from(defaultSchema).path(null),
-        typeFactory);
+        typeFactory, connectionConfig);
   }
 
   private static SchemaPlus rootSchema(SchemaPlus schema) {

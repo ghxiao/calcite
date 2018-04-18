@@ -31,6 +31,7 @@ import org.apache.calcite.avatica.UnregisteredDriver;
 import org.apache.calcite.avatica.remote.TypedValue;
 import org.apache.calcite.config.CalciteConnectionConfig;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
+import org.apache.calcite.jdbc.CalcitePrepare.Context;
 import org.apache.calcite.linq4j.BaseQueryable;
 import org.apache.calcite.linq4j.Enumerable;
 import org.apache.calcite.linq4j.Enumerator;
@@ -47,8 +48,10 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.schema.SchemaVersion;
 import org.apache.calcite.schema.Schemas;
 import org.apache.calcite.schema.impl.AbstractSchema;
+import org.apache.calcite.schema.impl.LongSchemaVersion;
 import org.apache.calcite.server.CalciteServer;
 import org.apache.calcite.server.CalciteServerStatement;
 import org.apache.calcite.sql.advise.SqlAdvisor;
@@ -139,6 +142,10 @@ abstract class CalciteConnectionImpl
     return new CalciteConnectionConfigImpl(info);
   }
 
+  public Context createPrepareContext() {
+    return new ContextImpl(this);
+  }
+
   /** Called after the constructor has completed and the model has been
    * loaded. */
   void init() {
@@ -193,7 +200,7 @@ abstract class CalciteConnectionImpl
       int resultSetHoldability) throws SQLException {
     try {
       final Meta.Signature signature =
-          parseQuery(query, new ContextImpl(this), -1);
+          parseQuery(query, createPrepareContext(), -1);
       final CalcitePreparedStatement calcitePreparedStatement =
           (CalcitePreparedStatement) factory.newPreparedStatement(this, null,
               signature, resultSetType, resultSetConcurrency, resultSetHoldability);
@@ -205,8 +212,8 @@ abstract class CalciteConnectionImpl
     }
   }
 
-  <T> CalcitePrepare.CalciteSignature<T>
-  parseQuery(CalcitePrepare.Query<T> query,
+  <T> CalcitePrepare.CalciteSignature<T> parseQuery(
+      CalcitePrepare.Query<T> query,
       CalcitePrepare.Context prepareContext, long maxRowCount) {
     CalcitePrepare.Dummy.push(prepareContext);
     try {
@@ -290,15 +297,16 @@ abstract class CalciteConnectionImpl
       throw new RuntimeException(e);
     }
     map.put(DataContext.Variable.CANCEL_FLAG.camelName, cancelFlag);
-    final DataContext dataContext = createDataContext(map);
+    final DataContext dataContext = createDataContext(map, signature.rootSchema);
     return signature.enumerable(dataContext);
   }
 
-  public DataContext createDataContext(Map<String, Object> parameterValues) {
+  public DataContext createDataContext(Map<String, Object> parameterValues,
+      CalciteSchema rootSchema) {
     if (config().spark()) {
       return new SlimDataContext();
     }
-    return new DataContextImpl(this, parameterValues);
+    return new DataContextImpl(this, parameterValues, rootSchema);
   }
 
   // do not make public
@@ -311,7 +319,9 @@ abstract class CalciteConnectionImpl
     return factory;
   }
 
-  /** Implementation of Queryable. */
+  /** Implementation of Queryable.
+   *
+   * @param <T> element type */
   static class CalciteQueryable<T> extends BaseQueryable<T> {
     CalciteQueryable(CalciteConnection connection, Type elementType,
         Expression expression) {
@@ -373,10 +383,10 @@ abstract class CalciteConnectionImpl
     private final JavaTypeFactory typeFactory;
 
     DataContextImpl(CalciteConnectionImpl connection,
-        Map<String, Object> parameters) {
+        Map<String, Object> parameters, CalciteSchema rootSchema) {
       this.queryProvider = connection;
       this.typeFactory = connection.getTypeFactory();
-      this.rootSchema = connection.rootSchema;
+      this.rootSchema = rootSchema;
 
       // Store the time at which the query started executing. The SQL
       // standard says that functions such as CURRENT_TIMESTAMP return the
@@ -390,11 +400,19 @@ abstract class CalciteConnectionImpl
       final long localOffset = timeZone.getOffset(time);
       final long currentOffset = localOffset;
 
+      // Give a hook chance to alter standard input, output, error streams.
+      final Holder<Object[]> streamHolder =
+          Holder.of(new Object[] {System.in, System.out, System.err});
+      Hook.STANDARD_STREAMS.run(streamHolder);
+
       ImmutableMap.Builder<Object, Object> builder = ImmutableMap.builder();
       builder.put(Variable.UTC_TIMESTAMP.camelName, time)
           .put(Variable.CURRENT_TIMESTAMP.camelName, time + currentOffset)
           .put(Variable.LOCAL_TIMESTAMP.camelName, time + localOffset)
-          .put(Variable.TIME_ZONE.camelName, timeZone);
+          .put(Variable.TIME_ZONE.camelName, timeZone)
+          .put(Variable.STDIN.camelName, streamHolder.get()[0])
+          .put(Variable.STDOUT.camelName, streamHolder.get()[1])
+          .put(Variable.STDERR.camelName, streamHolder.get()[2]);
       for (Map.Entry<String, Object> entry : parameters.entrySet()) {
         Object e = entry.getValue();
         if (e == null) {
@@ -425,14 +443,14 @@ abstract class CalciteConnectionImpl
               : ImmutableList.of(schemaName);
       final SqlValidatorWithHints validator =
           new SqlAdvisorValidator(SqlStdOperatorTable.instance(),
-          new CalciteCatalogReader(rootSchema, con.config().caseSensitive(),
-              schemaPath, typeFactory),
+          new CalciteCatalogReader(rootSchema,
+              schemaPath, typeFactory, con.config()),
           typeFactory, SqlConformanceEnum.DEFAULT);
       return new SqlAdvisor(validator);
     }
 
     public SchemaPlus getRootSchema() {
-      return rootSchema.plus();
+      return rootSchema == null ? null : rootSchema.plus();
     }
 
     public JavaTypeFactory getTypeFactory() {
@@ -447,9 +465,15 @@ abstract class CalciteConnectionImpl
   /** Implementation of Context. */
   static class ContextImpl implements CalcitePrepare.Context {
     private final CalciteConnectionImpl connection;
+    private final CalciteSchema mutableRootSchema;
+    private final CalciteSchema rootSchema;
 
     ContextImpl(CalciteConnectionImpl connection) {
       this.connection = Preconditions.checkNotNull(connection);
+      long now = System.currentTimeMillis();
+      SchemaVersion schemaVersion = new LongSchemaVersion(now);
+      this.mutableRootSchema = connection.rootSchema;
+      this.rootSchema = mutableRootSchema.createSnapshot(schemaVersion);
     }
 
     public JavaTypeFactory getTypeFactory() {
@@ -457,7 +481,11 @@ abstract class CalciteConnectionImpl
     }
 
     public CalciteSchema getRootSchema() {
-      return connection.rootSchema;
+      return rootSchema;
+    }
+
+    public CalciteSchema getMutableRootSchema() {
+      return mutableRootSchema;
     }
 
     public List<String> getDefaultSchemaPath() {
@@ -467,12 +495,30 @@ abstract class CalciteConnectionImpl
           : ImmutableList.of(schemaName);
     }
 
+    public List<String> getObjectPath() {
+      return null;
+    }
+
     public CalciteConnectionConfig config() {
       return connection.config();
     }
 
     public DataContext getDataContext() {
-      return connection.createDataContext(ImmutableMap.<String, Object>of());
+      return connection.createDataContext(ImmutableMap.<String, Object>of(),
+          rootSchema);
+    }
+
+    public RelRunner getRelRunner() {
+      final RelRunner runner;
+      try {
+        runner = connection.unwrap(RelRunner.class);
+      } catch (SQLException e) {
+        throw new RuntimeException(e);
+      }
+      if (runner == null) {
+        throw new UnsupportedOperationException();
+      }
+      return runner;
     }
 
     public CalcitePrepare.SparkHandler spark() {
@@ -513,8 +559,8 @@ abstract class CalciteConnectionImpl
       this.connection = Preconditions.checkNotNull(connection);
     }
 
-    public ContextImpl createPrepareContext() {
-      return new ContextImpl(connection);
+    public Context createPrepareContext() {
+      return connection.createPrepareContext();
     }
 
     public CalciteConnection getConnection() {

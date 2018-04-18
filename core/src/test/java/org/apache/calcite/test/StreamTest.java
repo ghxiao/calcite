@@ -18,6 +18,7 @@ package org.apache.calcite.test;
 
 import org.apache.calcite.DataContext;
 import org.apache.calcite.avatica.util.DateTimeUtils;
+import org.apache.calcite.config.CalciteConnectionConfig;
 import org.apache.calcite.linq4j.Enumerable;
 import org.apache.calcite.linq4j.Linq4j;
 import org.apache.calcite.linq4j.function.Function0;
@@ -33,6 +34,8 @@ import org.apache.calcite.schema.Statistics;
 import org.apache.calcite.schema.StreamableTable;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.TableFactory;
+import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.ImmutableBitSet;
 
@@ -382,6 +385,16 @@ public class StreamTest {
     public Schema.TableType getJdbcTableType() {
       return Schema.TableType.TABLE;
     }
+
+    @Override public boolean isRolledUp(String column) {
+      return false;
+    }
+
+    @Override public boolean rolledUpColumnValidInsideAgg(String column,
+                                                          SqlCall call, SqlNode parent,
+                                                          CalciteConnectionConfig config) {
+      return false;
+    }
   }
 
   /** Mock table that returns a stream of orders from a fixed array. */
@@ -398,11 +411,11 @@ public class StreamTest {
 
     public static ImmutableList<Object[]> getRowList() {
       final Object[][] rows = {
-        {ts(10, 15, 0), 1, "paint", 10},
-        {ts(10, 24, 15), 2, "paper", 5},
-        {ts(10, 24, 45), 3, "brush", 12},
-        {ts(10, 58, 0), 4, "paint", 3},
-        {ts(11, 10, 0), 5, "paint", 3}
+          {ts(10, 15, 0), 1, "paint", 10},
+          {ts(10, 24, 15), 2, "paper", 5},
+          {ts(10, 24, 45), 3, "brush", 12},
+          {ts(10, 58, 0), 4, "paint", 3},
+          {ts(11, 10, 0), 5, "paint", 3}
       };
       return ImmutableList.copyOf(rows);
     }
@@ -427,6 +440,16 @@ public class StreamTest {
 
     @Override public Table stream() {
       return new OrdersTable(rows);
+    }
+
+    @Override public boolean isRolledUp(String column) {
+      return false;
+    }
+
+    @Override public boolean rolledUpColumnValidInsideAgg(String column,
+                                                          SqlCall call, SqlNode parent,
+                                                          CalciteConnectionConfig config) {
+      return false;
     }
   }
 
@@ -506,9 +529,9 @@ public class StreamTest {
     public Table create(SchemaPlus schema, String name,
         Map<String, Object> operand, RelDataType rowType) {
       final Object[][] rows = {
-        {"paint", 1},
-        {"paper", 0},
-        {"brush", 1}
+          {"paint", 1},
+          {"paper", 0},
+          {"brush", 1}
       };
       return new ProductsTable(ImmutableList.copyOf(rows));
     }
@@ -547,6 +570,16 @@ public class StreamTest {
 
     public Schema.TableType getJdbcTableType() {
       return Schema.TableType.TABLE;
+    }
+
+    @Override public boolean isRolledUp(String column) {
+      return false;
+    }
+
+    @Override public boolean rolledUpColumnValidInsideAgg(String column,
+                                                          SqlCall call, SqlNode parent,
+                                                          CalciteConnectionConfig config) {
+      return false;
     }
   }
 }

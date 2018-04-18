@@ -20,6 +20,7 @@ import org.apache.calcite.adapter.java.ReflectiveSchema;
 import org.apache.calcite.avatica.util.DateTimeUtils;
 import org.apache.calcite.config.Lex;
 import org.apache.calcite.jdbc.CalciteConnection;
+import org.apache.calcite.jdbc.Driver;
 import org.apache.calcite.linq4j.Enumerable;
 import org.apache.calcite.linq4j.Linq4j;
 import org.apache.calcite.linq4j.QueryProvider;
@@ -57,10 +58,12 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Date;
 import java.util.List;
+import java.util.Properties;
 
 import static org.apache.calcite.test.JdbcTest.Employee;
 
 import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
@@ -724,6 +727,28 @@ public class ReflectiveSchemaTest {
         .returnsUnordered("V=1970-01-01");
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-281">[CALCITE-1919]
+   * NPE when target in ReflectiveSchema belongs to the unnamed package</a>. */
+  @Test public void testReflectiveSchemaInUnnamedPackage() throws Exception {
+    final Driver driver = new Driver();
+    try (CalciteConnection connection = (CalciteConnection)
+        driver.connect("jdbc:calcite:", new Properties())) {
+      SchemaPlus rootSchema = connection.getRootSchema();
+      final Class<?> c = Class.forName("RootHr");
+      final Object o = c.getDeclaredConstructor().newInstance();
+      rootSchema.add("hr", new ReflectiveSchema(o));
+      connection.setSchema("hr");
+      final Statement statement = connection.createStatement();
+      final String sql = "select * from \"emps\"";
+      final ResultSet resultSet = statement.executeQuery(sql);
+      final String expected = "empid=100; name=Bill\n"
+          + "empid=200; name=Eric\n"
+          + "empid=150; name=Sebastian\n";
+      assertThat(CalciteAssert.toString(resultSet), is(expected));
+    }
+  }
+
   /** Extension to {@link Employee} with a {@code hireDate} column. */
   public static class EmployeeWithHireDate extends Employee {
     public final java.sql.Date hireDate;
@@ -855,17 +880,17 @@ public class ReflectiveSchemaTest {
     public final BitSet bitSet = new BitSet(1);
 
     public final EveryType[] everyTypes = {
-      new EveryType(
-          false, (byte) 0, (char) 0, (short) 0, 0, 0L, 0F, 0D,
-          false, (byte) 0, (char) 0, (short) 0, 0, 0L, 0F, 0D,
-          new java.sql.Date(0), new Time(0), new Timestamp(0),
-          new Date(0), "1"),
-      new EveryType(
-          true, Byte.MAX_VALUE, Character.MAX_VALUE, Short.MAX_VALUE,
-          Integer.MAX_VALUE, Long.MAX_VALUE, Float.MAX_VALUE,
-          Double.MAX_VALUE,
-          null, null, null, null, null, null, null, null,
-          null, null, null, null, null),
+        new EveryType(
+            false, (byte) 0, (char) 0, (short) 0, 0, 0L, 0F, 0D,
+            false, (byte) 0, (char) 0, (short) 0, 0, 0L, 0F, 0D,
+            new java.sql.Date(0), new Time(0), new Timestamp(0),
+            new Date(0), "1"),
+        new EveryType(
+            true, Byte.MAX_VALUE, Character.MAX_VALUE, Short.MAX_VALUE,
+            Integer.MAX_VALUE, Long.MAX_VALUE, Float.MAX_VALUE,
+            Double.MAX_VALUE,
+            null, null, null, null, null, null, null, null,
+            null, null, null, null, null),
     };
 
     public final AllPrivate[] allPrivates = { new AllPrivate() };
@@ -873,10 +898,10 @@ public class ReflectiveSchemaTest {
     public final BadType[] badTypes = { new BadType() };
 
     public final Employee[] prefixEmps = {
-      new Employee(1, 10, "A", 0f, null),
-      new Employee(2, 10, "Ab", 0f, null),
-      new Employee(3, 10, "Abc", 0f, null),
-      new Employee(4, 10, "Abd", 0f, null),
+        new Employee(1, 10, "A", 0f, null),
+        new Employee(2, 10, "Ab", 0f, null),
+        new Employee(3, 10, "Abc", 0f, null),
+        new Employee(4, 10, "Abd", 0f, null),
     };
 
     public final Integer[] primesBoxed = new Integer[]{1, 3, 5};
@@ -887,11 +912,11 @@ public class ReflectiveSchemaTest {
         new IntHolder[]{new IntHolder(1), new IntHolder(3), new IntHolder(5)};
 
     public final IntAndString[] nullables = new IntAndString[] {
-      new IntAndString(1, "A"), new IntAndString(2, "B"), new IntAndString(2, "C"),
-      new IntAndString(3, null)};
+        new IntAndString(1, "A"), new IntAndString(2, "B"), new IntAndString(2, "C"),
+        new IntAndString(3, null)};
 
     public final IntAndString[] bools = new IntAndString[] {
-      new IntAndString(1, "T"), new IntAndString(2, "F"), new IntAndString(3, null)};
+        new IntAndString(1, "T"), new IntAndString(2, "F"), new IntAndString(3, null)};
   }
 
   /**
@@ -908,9 +933,9 @@ public class ReflectiveSchemaTest {
   /** Schema that contains a table with a date column. */
   public static class DateColumnSchema {
     public final EmployeeWithHireDate[] emps = {
-      new EmployeeWithHireDate(
-          10, 20, "fred", 0f, null, new java.sql.Date(0)), // 1970-1-1
-      new EmployeeWithHireDate(
+        new EmployeeWithHireDate(
+            10, 20, "fred", 0f, null, new java.sql.Date(0)), // 1970-1-1
+        new EmployeeWithHireDate(
             10, 20, "bill", 0f, null,
             new java.sql.Date(100 * DateTimeUtils.MILLIS_PER_DAY)) // 1970-04-11
     };

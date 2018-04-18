@@ -260,8 +260,16 @@ public class SqlWindow extends SqlCall {
     return orderList;
   }
 
+  public void setOrderList(SqlNodeList orderList) {
+    this.orderList = orderList;
+  }
+
   public SqlNodeList getPartitionList() {
     return partitionList;
+  }
+
+  public void setPartitionList(SqlNodeList partitionList) {
+    this.partitionList = partitionList;
   }
 
   public SqlIdentifier getRefName() {
@@ -386,13 +394,13 @@ public class SqlWindow extends SqlCall {
    *
    * <p>For example,
    *
-   * <pre>WINDOW (w PARTITION BY x ORDER BY y)
+   * <blockquote><pre>WINDOW (w PARTITION BY x ORDER BY y)
    *   overlay
-   *   WINDOW w AS (PARTITION BY z)</pre>
+   *   WINDOW w AS (PARTITION BY z)</pre></blockquote>
    *
-   * yields
+   * <p>yields
    *
-   * <pre>WINDOW (PARTITION BY z ORDER BY y)</pre>
+   * <blockquote><pre>WINDOW (PARTITION BY z ORDER BY y)</pre></blockquote>
    *
    * <p>Does not alter this or the other window.
    *

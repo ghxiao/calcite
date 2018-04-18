@@ -40,8 +40,8 @@ user-friendly.
 
 ## Download source, build, and run tests
 
-Prerequisites are git, maven (3.2.1 or later) and Java (JDK 7 or
-later, 8 preferred) on your path.
+Prerequisites are git, maven (3.5.2 or later)
+and Java (JDK 8 or later, 9 preferred) on your path.
 
 Create a local copy of the git repository, `cd` to its root directory,
 then build using maven:
@@ -54,6 +54,7 @@ $ mvn install
 
 The HOWTO describes how to
 [build from a source distribution]({{ site.baseurl }}/docs/howto.html#building-from-a-source-distribution),
+[set up an IDE for contributing]({{ site.baseurl }}/docs/howto.html#setting-up-an-ide-for-contributing),
 [run more or fewer tests]({{ site.baseurl }}/docs/howto.html#running-tests) and
 [run integration tests]({{ site.baseurl }}/docs/howto.html#running-integration-tests).
 

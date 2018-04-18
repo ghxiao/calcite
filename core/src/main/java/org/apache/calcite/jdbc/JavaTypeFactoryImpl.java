@@ -27,6 +27,7 @@ import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rel.type.RelDataTypeFieldImpl;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rel.type.RelRecordType;
+import org.apache.calcite.runtime.GeoFunctions;
 import org.apache.calcite.runtime.Unit;
 import org.apache.calcite.sql.type.BasicSqlType;
 import org.apache.calcite.sql.type.IntervalSqlType;
@@ -44,7 +45,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
-import java.sql.Array;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -61,7 +61,7 @@ public class JavaTypeFactoryImpl
     extends SqlTypeFactoryImpl
     implements JavaTypeFactory {
   private final Map<List<Pair<Type, Boolean>>, SyntheticRecordType>
-  syntheticTypes = new HashMap<>();
+      syntheticTypes = new HashMap<>();
 
   public JavaTypeFactoryImpl() {
     this(RelDataTypeSystem.DEFAULT);
@@ -176,12 +176,14 @@ public class JavaTypeFactoryImpl
         return String.class;
       case DATE:
       case TIME:
+      case TIME_WITH_LOCAL_TIME_ZONE:
       case INTEGER:
       case INTERVAL_YEAR:
       case INTERVAL_YEAR_MONTH:
       case INTERVAL_MONTH:
         return type.isNullable() ? Integer.class : int.class;
       case TIMESTAMP:
+      case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
       case BIGINT:
       case INTERVAL_DAY:
       case INTERVAL_DAY_HOUR:
@@ -210,8 +212,8 @@ public class JavaTypeFactoryImpl
       case BINARY:
       case VARBINARY:
         return ByteString.class;
-      case ARRAY:
-        return Array.class;
+      case GEOMETRY:
+        return GeoFunctions.Geom.class;
       case ANY:
         return Object.class;
       }
@@ -359,7 +361,7 @@ public class JavaTypeFactoryImpl
     private final boolean nullable;
     private final int modifiers;
 
-    public RecordFieldImpl(
+    RecordFieldImpl(
         SyntheticRecordType syntheticType,
         String name,
         Type type,

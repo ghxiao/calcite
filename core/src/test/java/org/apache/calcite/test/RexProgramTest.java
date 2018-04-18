@@ -16,9 +16,13 @@
  */
 package org.apache.calcite.test;
 
+import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.avatica.util.ByteString;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
+import org.apache.calcite.linq4j.QueryProvider;
+import org.apache.calcite.plan.RelOptPredicateList;
+import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.Strong;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -26,6 +30,8 @@ import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexDynamicParam;
+import org.apache.calcite.rex.RexExecutor;
+import org.apache.calcite.rex.RexExecutorImpl;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexLocalRef;
@@ -34,13 +40,21 @@ import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexProgramBuilder;
 import org.apache.calcite.rex.RexSimplify;
 import org.apache.calcite.rex.RexUtil;
+import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlTypeAssignmentRules;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.NlsString;
 import org.apache.calcite.util.TestUtil;
+import org.apache.calcite.util.TimeString;
+import org.apache.calcite.util.TimestampString;
+import org.apache.calcite.util.TimestampWithTimeZoneString;
 import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
@@ -55,13 +69,16 @@ import org.junit.Test;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.TreeMap;
 
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.nullValue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
 
 /**
@@ -91,12 +108,43 @@ public class RexProgramTest {
   public void setUp() {
     typeFactory = new JavaTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
     rexBuilder = new RexBuilder(typeFactory);
-    simplify = new RexSimplify(rexBuilder, false, RexUtil.EXECUTOR);
+    RexExecutor executor =
+        new RexExecutorImpl(new DummyTestDataContext());
+    simplify =
+        new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, false, executor);
     trueLiteral = rexBuilder.makeLiteral(true);
     falseLiteral = rexBuilder.makeLiteral(false);
     final RelDataType intType = typeFactory.createSqlType(SqlTypeName.INTEGER);
     nullLiteral = rexBuilder.makeNullLiteral(intType);
     unknownLiteral = rexBuilder.makeNullLiteral(trueLiteral.getType());
+  }
+
+  /** Dummy data context for test. */
+  private static class DummyTestDataContext implements DataContext {
+    private final ImmutableMap<String, Object> map;
+
+    DummyTestDataContext() {
+      this.map =
+          ImmutableMap.<String, Object>of(
+              Variable.TIME_ZONE.camelName, TimeZone.getTimeZone("America/Los_Angeles"),
+              Variable.CURRENT_TIMESTAMP.camelName, 1311120000000L);
+    }
+
+    public SchemaPlus getRootSchema() {
+      return null;
+    }
+
+    public JavaTypeFactory getTypeFactory() {
+      return null;
+    }
+
+    public QueryProvider getQueryProvider() {
+      return null;
+    }
+
+    public Object get(String name) {
+      return map.get(name);
+    }
   }
 
   private void checkCnf(RexNode node, String expected) {
@@ -151,6 +199,13 @@ public class RexProgramTest {
         equalTo(expected));
   }
 
+  private void checkSimplifyFilter(RexNode node, RelOptPredicateList predicates,
+      String expected) {
+    assertThat(simplify.withUnknownAsFalse(true).withPredicates(predicates)
+            .simplify(node).toString(),
+        equalTo(expected));
+  }
+
   /** Returns the number of nodes (including leaves) in a Rex tree. */
   private static int nodeCount(RexNode node) {
     int n = 1;
@@ -168,6 +223,10 @@ public class RexProgramTest {
 
   private RexNode isNotNull(RexNode node) {
     return rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, node);
+  }
+
+  private RexNode nullIf(RexNode node1, RexNode node2) {
+    return rexBuilder.makeCall(SqlStdOperatorTable.NULLIF, node1, node2);
   }
 
   private RexNode not(RexNode node) {
@@ -537,16 +596,19 @@ public class RexProgramTest {
     final RexNode andTrueUnknown = and(trueLiteral, unknownLiteral);
     final RexNode andFalseTrue = and(falseLiteral, trueLiteral);
 
-    assertThat(Strong.isNull(andUnknownTrue, c), is(true));
-    assertThat(Strong.isNull(andTrueUnknown, c), is(true));
+    assertThat(Strong.isNull(andUnknownTrue, c), is(false));
+    assertThat(Strong.isNull(andTrueUnknown, c), is(false));
     assertThat(Strong.isNull(andFalseTrue, c), is(false));
 
     // If i0 is null, "i0 and i1 is null" is null
-    assertThat(Strong.isNull(and(i0, isNull(i1)), c0), is(true));
-    // If i1 is null, "i0 and i1 is null" is not necessarily null
+    assertThat(Strong.isNull(and(i0, isNull(i1)), c0), is(false));
+    // If i1 is null, "i0 and i1" is false
     assertThat(Strong.isNull(and(i0, isNull(i1)), c1), is(false));
-    // If i0 and i1 are both null, "i0 and i1 is null" is null
-    assertThat(Strong.isNull(and(i0, isNull(i1)), c01), is(true));
+    // If i0 and i1 are both null, "i0 and i1" is null
+    assertThat(Strong.isNull(and(i0, i1), c01), is(true));
+    assertThat(Strong.isNull(and(i0, i1), c1), is(false));
+    // If i0 and i1 are both null, "i0 and isNull(i1) is false"
+    assertThat(Strong.isNull(and(i0, isNull(i1)), c01), is(false));
     // If i0 and i1 are both null, "i0 or i1" is null
     assertThat(Strong.isNull(or(i0, i1), c01), is(true));
     // If i0 is null, "i0 or i1" is not necessarily null
@@ -563,6 +625,167 @@ public class RexProgramTest {
     RexNode notI0NotNull = not(isNotNull(i0));
     assertThat(Strong.isNull(notI0NotNull, c0), is(false));
     assertThat(Strong.isNotTrue(notI0NotNull, c0), is(false));
+
+    // NULLIF(null, null): null
+    // NULLIF(null, X): null
+    // NULLIF(X, X/Y): null or X
+    // NULLIF(X, null): X
+    assertThat(Strong.isNull(nullIf(nullLiteral, nullLiteral), c), is(true));
+    assertThat(Strong.isNull(nullIf(nullLiteral, trueLiteral), c), is(true));
+    assertThat(Strong.isNull(nullIf(trueLiteral, trueLiteral), c), is(false));
+    assertThat(Strong.isNull(nullIf(trueLiteral, falseLiteral), c), is(false));
+    assertThat(Strong.isNull(nullIf(trueLiteral, nullLiteral), c), is(false));
+
+    // ISNULL(null) is true, ISNULL(not null value) is false
+    assertThat(Strong.isNull(isNull(nullLiteral), c01), is(false));
+    assertThat(Strong.isNull(isNull(trueLiteral), c01), is(false));
+
+    // CASE ( <predicate1> <value1> <predicate2> <value2> <predicate3> <value3> ...)
+    // only definitely null if all values are null.
+    assertThat(
+        Strong.isNull(
+            case_(eq(i0, i1), nullLiteral, ge(i0, i1), nullLiteral, nullLiteral), c01),
+        is(true));
+    assertThat(
+        Strong.isNull(
+            case_(eq(i0, i1), i0, ge(i0, i1), nullLiteral, nullLiteral), c01),
+        is(true));
+    assertThat(
+        Strong.isNull(
+            case_(eq(i0, i1), i0, ge(i0, i1), nullLiteral, nullLiteral), c1),
+        is(false));
+    assertThat(
+        Strong.isNull(
+            case_(eq(i0, i1), nullLiteral, ge(i0, i1), i0, nullLiteral), c01),
+        is(true));
+    assertThat(
+        Strong.isNull(
+            case_(eq(i0, i1), nullLiteral, ge(i0, i1), i0, nullLiteral), c1),
+        is(false));
+    assertThat(
+        Strong.isNull(
+            case_(eq(i0, i1), nullLiteral, ge(i0, i1), nullLiteral, i0), c01),
+        is(true));
+    assertThat(
+        Strong.isNull(
+            case_(eq(i0, i1), nullLiteral, ge(i0, i1), nullLiteral, i0), c1),
+        is(false));
+    assertThat(
+        Strong.isNull(
+            case_(isNotNull(i0), i0, i1), c),
+        is(false));
+    assertThat(
+        Strong.isNull(
+            case_(isNotNull(i0), i0, i1), c0),
+        is(false));
+    assertThat(
+        Strong.isNull(
+            case_(isNotNull(i0), i0, i1), c1),
+        is(false));
+    assertThat(
+        Strong.isNull(
+            case_(isNotNull(i0), i0, i1), c01),
+        is(true));
+
+  }
+
+  /** Unit test for {@link org.apache.calcite.rex.RexUtil#isLosslessCast(RexNode)}. */
+  @Test public void testLosslessCast() {
+    final RelDataType tinyIntType = typeFactory.createSqlType(SqlTypeName.TINYINT);
+    final RelDataType smallIntType = typeFactory.createSqlType(SqlTypeName.SMALLINT);
+    final RelDataType intType = typeFactory.createSqlType(SqlTypeName.INTEGER);
+    final RelDataType bigIntType = typeFactory.createSqlType(SqlTypeName.BIGINT);
+    final RelDataType floatType = typeFactory.createSqlType(SqlTypeName.FLOAT);
+    final RelDataType booleanType = typeFactory.createSqlType(SqlTypeName.BOOLEAN);
+    final RelDataType charType5 = typeFactory.createSqlType(SqlTypeName.CHAR, 5);
+    final RelDataType charType6 = typeFactory.createSqlType(SqlTypeName.CHAR, 6);
+    final RelDataType varCharType10 = typeFactory.createSqlType(SqlTypeName.VARCHAR, 10);
+    final RelDataType varCharType11 = typeFactory.createSqlType(SqlTypeName.VARCHAR, 11);
+
+    // Negative
+    assertThat(RexUtil.isLosslessCast(rexBuilder.makeInputRef(intType, 0)), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                tinyIntType, rexBuilder.makeInputRef(smallIntType, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                smallIntType, rexBuilder.makeInputRef(intType, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                intType, rexBuilder.makeInputRef(bigIntType, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                bigIntType, rexBuilder.makeInputRef(floatType, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                booleanType, rexBuilder.makeInputRef(bigIntType, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                intType, rexBuilder.makeInputRef(charType5, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                intType, rexBuilder.makeInputRef(varCharType10, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                varCharType10, rexBuilder.makeInputRef(varCharType11, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                charType5, rexBuilder.makeInputRef(bigIntType, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                charType5, rexBuilder.makeInputRef(smallIntType, 0))), is(false));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                varCharType10, rexBuilder.makeInputRef(intType, 0))), is(false));
+
+    // Positive
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                smallIntType, rexBuilder.makeInputRef(tinyIntType, 0))), is(true));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                intType, rexBuilder.makeInputRef(smallIntType, 0))), is(true));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                bigIntType, rexBuilder.makeInputRef(intType, 0))), is(true));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                intType, rexBuilder.makeInputRef(intType, 0))), is(true));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                charType6, rexBuilder.makeInputRef(smallIntType, 0))), is(true));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                varCharType10, rexBuilder.makeInputRef(smallIntType, 0))), is(true));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                varCharType11, rexBuilder.makeInputRef(intType, 0))), is(true));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                varCharType11, rexBuilder.makeInputRef(charType6, 0))), is(true));
+    assertThat(
+        RexUtil.isLosslessCast(
+            rexBuilder.makeCast(
+                varCharType11, rexBuilder.makeInputRef(varCharType10, 0))), is(true));
   }
 
   /** Unit test for {@link org.apache.calcite.rex.RexUtil#toCnf}. */
@@ -765,7 +988,7 @@ public class RexProgramTest {
   private void checkExponentialCnf(int n) {
     final RelDataType booleanType =
         typeFactory.createSqlType(SqlTypeName.BOOLEAN);
-    final RelDataTypeFactory.FieldInfoBuilder builder = typeFactory.builder();
+    final RelDataTypeFactory.Builder builder = typeFactory.builder();
     for (int i = 0; i < n; i++) {
       builder.add("x" + i, booleanType)
           .add("y" + i, booleanType);
@@ -1064,8 +1287,8 @@ public class RexProgramTest {
     final RexNode cRef = rexBuilder.makeFieldAccess(range, 2);
     final RexNode dRef = rexBuilder.makeFieldAccess(range, 3);
     final RexLiteral literal1 = rexBuilder.makeExactLiteral(BigDecimal.ONE);
+    final RexLiteral literal5 = rexBuilder.makeExactLiteral(new BigDecimal(5));
     final RexLiteral literal10 = rexBuilder.makeExactLiteral(BigDecimal.TEN);
-
 
     // condition, and the inverse
     checkSimplifyFilter(and(le(aRef, literal1), gt(aRef, literal1)),
@@ -1078,8 +1301,26 @@ public class RexProgramTest {
         "false");
 
     // simplify equals boolean
-    checkSimplifyFilter(and(eq(eq(aRef, literal1), trueLiteral), eq(bRef, literal1)),
+    final ImmutableList<RexNode> args =
+        ImmutableList.of(eq(eq(aRef, literal1), trueLiteral),
+            eq(bRef, literal1));
+    checkSimplifyFilter(and(args),
         "AND(=(?0.a, 1), =(?0.b, 1))");
+
+    // as previous, using simplifyFilterPredicates
+    assertThat(simplify.withUnknownAsFalse(true)
+            .simplifyFilterPredicates(args)
+            .toString(),
+        equalTo("AND(=(?0.a, 1), =(?0.b, 1))"));
+
+    // "a = 1 and a = 10" is always false
+    final ImmutableList<RexNode> args2 =
+        ImmutableList.of(eq(aRef, literal1), eq(aRef, literal10));
+    checkSimplifyFilter(and(args2), "false");
+
+    assertThat(simplify.withUnknownAsFalse(true)
+            .simplifyFilterPredicates(args2),
+        nullValue());
 
     // equality on constants, can remove the equality on the variables
     checkSimplifyFilter(and(eq(aRef, literal1), eq(bRef, literal1), eq(aRef, bRef)),
@@ -1089,10 +1330,129 @@ public class RexProgramTest {
     checkSimplifyFilter(and(eq(aRef, literal1), eq(bRef, literal10), eq(aRef, bRef)),
         "false");
 
+    // condition not satisfiable
+    checkSimplifyFilter(and(gt(aRef, literal10), ge(bRef, literal1), lt(aRef, literal10)),
+        "false");
+
+    // one "and" containing three "or"s
+    checkSimplifyFilter(
+        or(gt(aRef, literal10), gt(bRef, literal1), gt(aRef, literal10)),
+        "OR(>(?0.a, 10), >(?0.b, 1))");
+
     // case: trailing false and null, remove
     checkSimplifyFilter(
         case_(aRef, trueLiteral, bRef, trueLiteral, cRef, falseLiteral, dRef, falseLiteral,
             unknownLiteral), "CAST(OR(?0.a, ?0.b)):BOOLEAN");
+
+    // condition with null value for range
+    checkSimplifyFilter(and(gt(aRef, unknownLiteral), ge(bRef, literal1)), "false");
+
+    // condition "1 < a && 5 < x" yields "5 < x"
+    checkSimplifyFilter(
+        and(lt(literal1, aRef), lt(literal5, aRef)),
+        RelOptPredicateList.EMPTY,
+        "<(5, ?0.a)");
+
+    // condition "1 < a && a < 5" is unchanged
+    checkSimplifyFilter(
+        and(lt(literal1, aRef), lt(aRef, literal5)),
+        RelOptPredicateList.EMPTY,
+        "AND(<(1, ?0.a), <(?0.a, 5))");
+
+    // condition "1 > a && 5 > x" yields "1 > a"
+    checkSimplifyFilter(
+        and(gt(literal1, aRef), gt(literal5, aRef)),
+        RelOptPredicateList.EMPTY,
+        ">(1, ?0.a)");
+
+    // condition "1 > a && a > 5" yields false
+    checkSimplifyFilter(
+        and(gt(literal1, aRef), gt(aRef, literal5)),
+        RelOptPredicateList.EMPTY,
+        "false");
+
+    // range with no predicates;
+    // condition "a > 1 && a < 10 && a < 5" yields "a < 1 && a < 5"
+    checkSimplifyFilter(
+        and(gt(aRef, literal1), lt(aRef, literal10), lt(aRef, literal5)),
+        RelOptPredicateList.EMPTY,
+        "AND(>(?0.a, 1), <(?0.a, 5))");
+
+    // condition "a > 1 && a < 10 && a < 5"
+    // with pre-condition "a > 5"
+    // yields "false"
+    checkSimplifyFilter(
+        and(gt(aRef, literal1), lt(aRef, literal10), lt(aRef, literal5)),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(gt(aRef, literal5))),
+        "false");
+
+    // condition "a > 1 && a < 10 && a <= 5"
+    // with pre-condition "a >= 5"
+    // yields "a = 5"
+    // "a <= 5" would also be correct, just a little less concise.
+    checkSimplifyFilter(
+        and(gt(aRef, literal1), lt(aRef, literal10), le(aRef, literal5)),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(ge(aRef, literal5))),
+        "=(?0.a, 5)");
+
+    // condition "a > 1 && a < 10 && a < 5"
+    // with pre-condition "b < 10 && a > 5"
+    // yields "a > 1 and a < 5"
+    checkSimplifyFilter(
+        and(gt(aRef, literal1), lt(aRef, literal10), lt(aRef, literal5)),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(lt(bRef, literal10), ge(aRef, literal1))),
+        "AND(>(?0.a, 1), <(?0.a, 5))");
+
+    // condition "a > 1"
+    // with pre-condition "b < 10 && a > 5"
+    // yields "true"
+    checkSimplifyFilter(gt(aRef, literal1),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(lt(bRef, literal10), gt(aRef, literal5))),
+        "true");
+
+    // condition "a < 1"
+    // with pre-condition "b < 10 && a > 5"
+    // yields "false"
+    checkSimplifyFilter(lt(aRef, literal1),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(lt(bRef, literal10), gt(aRef, literal5))),
+        "false");
+
+    // condition "a > 5"
+    // with pre-condition "b < 10 && a >= 5"
+    // yields "a > 5"
+    checkSimplifyFilter(gt(aRef, literal5),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(lt(bRef, literal10), ge(aRef, literal5))),
+        ">(?0.a, 5)");
+
+    // condition "a > 5"
+    // with pre-condition "a <= 5"
+    // yields "false"
+    checkSimplifyFilter(gt(aRef, literal5),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(le(aRef, literal5))),
+        "false");
+
+    // condition "a > 5"
+    // with pre-condition "a <= 5 and b <= 5"
+    // yields "false"
+    checkSimplifyFilter(gt(aRef, literal5),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(le(aRef, literal5), le(bRef, literal5))),
+        "false");
+
+    // condition "a > 5 or b > 5"
+    // with pre-condition "a <= 5 and b <= 5"
+    // should yield "false" but yields "a = 5 or b = 5"
+    checkSimplifyFilter(or(gt(aRef, literal5), gt(bRef, literal5)),
+        RelOptPredicateList.of(rexBuilder,
+            ImmutableList.of(le(aRef, literal5), le(bRef, literal5))),
+        "false");
   }
 
   /** Unit test for
@@ -1225,12 +1585,11 @@ public class RexProgramTest {
     literals.add((RexLiteral)
         rexBuilder.makeLiteral(new ByteString(new byte[] {1, 2, -34, 0, -128}),
             typeFactory.createSqlType(SqlTypeName.BINARY, 5), false));
-    literals.add(
-        rexBuilder.makeDateLiteral(cal(1974, Calendar.AUGUST, 9, 0, 0, 0)));
-    literals.add(rexBuilder.makeTimeLiteral(cal(0, 0, 0, 1, 23, 45), 0));
+    literals.add(rexBuilder.makeDateLiteral(new DateString(1974, 8, 9)));
+    literals.add(rexBuilder.makeTimeLiteral(new TimeString(1, 23, 45), 0));
     literals.add(
         rexBuilder.makeTimestampLiteral(
-            cal(1974, Calendar.AUGUST, 9, 1, 23, 45), 0));
+            new TimestampString(1974, 8, 9, 1, 23, 45), 0));
 
     final Multimap<SqlTypeName, RexLiteral> map = LinkedHashMultimap.create();
     for (RexLiteral literal : literals) {
@@ -1256,8 +1615,8 @@ public class RexProgramTest {
 
     for (RelDataType fromType : types) {
       for (RelDataType toType : types) {
-        if (SqlTypeAssignmentRules.instance().canCastFrom(
-            toType.getSqlTypeName(), fromType.getSqlTypeName(), false)) {
+        if (SqlTypeAssignmentRules.instance(false)
+            .canCastFrom(toType.getSqlTypeName(), fromType.getSqlTypeName())) {
           for (RexLiteral literal : map.get(fromType.getSqlTypeName())) {
             final RexNode cast = rexBuilder.makeCast(toType, literal);
             if (cast instanceof RexLiteral) {
@@ -1309,6 +1668,95 @@ public class RexProgramTest {
     checkSimplifyUnchanged(cast(literalAbc, timestampType));
     checkSimplify(cast(literalOne, timestampType),
         "1970-01-01 00:00:00"); // different from Hive
+  }
+
+  @Test public void testSimplifyCastLiteral3() {
+    // Default TimeZone is "America/Los_Angeles" (DummyDataContext)
+    final RexLiteral literalDate = rexBuilder.makeDateLiteral(new DateString("2011-07-20"));
+    final RexLiteral literalTime = rexBuilder.makeTimeLiteral(new TimeString("12:34:56"), 0);
+    final RexLiteral literalTimestamp = rexBuilder.makeTimestampLiteral(
+        new TimestampString("2011-07-20 12:34:56"), 0);
+    final RexLiteral literalTimeLTZ =
+        rexBuilder.makeTimeWithLocalTimeZoneLiteral(
+            new TimeString(1, 23, 45), 0);
+    final RexLiteral timeLTZChar1 = rexBuilder.makeLiteral("12:34:45 America/Los_Angeles");
+    final RexLiteral timeLTZChar2 = rexBuilder.makeLiteral("12:34:45 UTC");
+    final RexLiteral timeLTZChar3 = rexBuilder.makeLiteral("12:34:45 GMT+01");
+    final RexLiteral timestampLTZChar1 = rexBuilder.makeLiteral("2011-07-20 12:34:56 Asia/Tokyo");
+    final RexLiteral timestampLTZChar2 = rexBuilder.makeLiteral("2011-07-20 12:34:56 GMT+01");
+    final RexLiteral timestampLTZChar3 = rexBuilder.makeLiteral("2011-07-20 12:34:56 UTC");
+    final RexLiteral literalTimestampLTZ =
+        rexBuilder.makeTimestampWithLocalTimeZoneLiteral(
+            new TimestampString(2011, 7, 20, 8, 23, 45), 0);
+
+    final RelDataType dateType =
+        typeFactory.createSqlType(SqlTypeName.DATE);
+    final RelDataType timeType =
+        typeFactory.createSqlType(SqlTypeName.TIME);
+    final RelDataType timestampType =
+        typeFactory.createSqlType(SqlTypeName.TIMESTAMP);
+    final RelDataType timeLTZType =
+        typeFactory.createSqlType(SqlTypeName.TIME_WITH_LOCAL_TIME_ZONE);
+    final RelDataType timestampLTZType =
+        typeFactory.createSqlType(SqlTypeName.TIMESTAMP_WITH_LOCAL_TIME_ZONE);
+    final RelDataType varCharType =
+        typeFactory.createSqlType(SqlTypeName.VARCHAR, 40);
+
+    checkSimplify(cast(timeLTZChar1, timeLTZType), "20:34:45");
+    checkSimplify(cast(timeLTZChar2, timeLTZType), "12:34:45");
+    checkSimplify(cast(timeLTZChar3, timeLTZType), "11:34:45");
+    checkSimplify(cast(literalTimeLTZ, timeLTZType), "01:23:45");
+    checkSimplify(cast(timestampLTZChar1, timestampLTZType),
+        "2011-07-20 03:34:56");
+    checkSimplify(cast(timestampLTZChar2, timestampLTZType),
+        "2011-07-20 11:34:56");
+    checkSimplify(cast(timestampLTZChar3, timestampLTZType),
+        "2011-07-20 12:34:56");
+    checkSimplify(cast(literalTimestampLTZ, timestampLTZType),
+        "2011-07-20 08:23:45");
+    checkSimplify(cast(literalDate, timestampLTZType),
+        "2011-07-20 07:00:00");
+    checkSimplify(cast(literalTime, timestampLTZType),
+        "2011-07-20 19:34:56");
+    checkSimplify(cast(literalTimestamp, timestampLTZType),
+        "2011-07-20 19:34:56");
+    checkSimplify(cast(literalTimestamp, dateType),
+        "2011-07-20");
+    checkSimplify(cast(literalTimestampLTZ, dateType),
+        "2011-07-20");
+    checkSimplify(cast(literalTimestampLTZ, timeType),
+        "01:23:45");
+    checkSimplify(cast(literalTimestampLTZ, timestampType),
+        "2011-07-20 01:23:45");
+    checkSimplify(cast(literalTimeLTZ, timeType),
+        "17:23:45");
+    checkSimplify(cast(literalTime, timeLTZType),
+        "20:34:56");
+    checkSimplify(cast(literalTimestampLTZ, timeLTZType),
+        "08:23:45");
+    checkSimplify(cast(literalTimeLTZ, varCharType),
+        "'17:23:45 America/Los_Angeles'");
+    checkSimplify(cast(literalTimestampLTZ, varCharType),
+        "'2011-07-20 01:23:45 America/Los_Angeles'");
+    checkSimplify(cast(literalTimeLTZ, timestampType),
+        "2011-07-19 18:23:45");
+    checkSimplify(cast(literalTimeLTZ, timestampLTZType),
+        "2011-07-20 01:23:45");
+  }
+
+  @Test public void testCompareTimestampWithTimeZone() {
+    final TimestampWithTimeZoneString timestampLTZChar1 =
+        new TimestampWithTimeZoneString("2011-07-20 10:34:56 America/Los_Angeles");
+    final TimestampWithTimeZoneString timestampLTZChar2 =
+        new TimestampWithTimeZoneString("2011-07-20 19:34:56 Europe/Rome");
+    final TimestampWithTimeZoneString timestampLTZChar3 =
+        new TimestampWithTimeZoneString("2011-07-20 01:34:56 Asia/Tokyo");
+    final TimestampWithTimeZoneString timestampLTZChar4 =
+        new TimestampWithTimeZoneString("2011-07-20 10:34:56 America/Los_Angeles");
+
+    assertThat(timestampLTZChar1.equals(timestampLTZChar2), is(false));
+    assertThat(timestampLTZChar1.equals(timestampLTZChar3), is(false));
+    assertThat(timestampLTZChar1.equals(timestampLTZChar4), is(true));
   }
 
   @Test public void testSimplifyLiterals() {
@@ -1376,15 +1824,22 @@ public class RexProgramTest {
     checkSimplifyUnchanged(le(literalAbc, literalZero));
   }
 
-  private Calendar cal(int y, int m, int d, int h, int mm, int s) {
-    final Calendar c = Util.calendar();
-    c.set(Calendar.YEAR, y);
-    c.set(Calendar.MONTH, m);
-    c.set(Calendar.DAY_OF_MONTH, d);
-    c.set(Calendar.HOUR_OF_DAY, h);
-    c.set(Calendar.MINUTE, mm);
-    c.set(Calendar.SECOND, s);
-    return c;
+  @Test public void testIsDeterministic() {
+    SqlOperator ndc = new SqlSpecialOperator(
+            "NDC",
+            SqlKind.OTHER_FUNCTION,
+            0,
+            false,
+            ReturnTypes.BOOLEAN,
+            null, null) {
+      @Override public boolean isDeterministic() {
+        return false;
+      }
+    };
+    RexNode n = rexBuilder.makeCall(ndc);
+    assertFalse(RexUtil.isDeterministic(n));
+    assertEquals(0,
+            RexUtil.retainDeterministic(RelOptUtil.conjunctions(n)).size());
   }
 
   @Test public void testConstantMap() {
@@ -1417,7 +1872,6 @@ public class RexProgramTest {
 
     // Contradictory constraints yield no constants
     final RexNode ref0 = rexBuilder.makeInputRef(rowType, 0);
-    final RexNode ref1 = rexBuilder.makeInputRef(rowType, 1);
     final ImmutableMap<RexNode, RexNode> map2 =
         RexUtil.predicateConstants(RexNode.class, rexBuilder,
             ImmutableList.of(eq(ref0, literal1),
@@ -1441,6 +1895,34 @@ public class RexProgramTest {
       map2.put(entry.getKey().toString(), entry.getValue());
     }
     return map2.toString();
+  }
+
+  @Test public void testSimplifyNot() {
+    final RelDataType booleanNullableType =
+        typeFactory.createTypeWithNullability(
+            typeFactory.createSqlType(SqlTypeName.BOOLEAN), true);
+    final RexNode booleanInput = rexBuilder.makeInputRef(booleanNullableType, 0);
+    final RexNode isFalse = rexBuilder.makeCall(SqlStdOperatorTable.IS_FALSE, booleanInput);
+    final RexCall result = (RexCall) simplify(isFalse);
+    assertThat(result.getType().isNullable(), is(false));
+    assertThat(result.getOperator(), is((SqlOperator) SqlStdOperatorTable.IS_FALSE));
+    assertThat(result.getOperands().size(), is(1));
+    assertThat(result.getOperands().get(0), is(booleanInput));
+
+    // Make sure that IS_FALSE(IS_FALSE(nullable boolean)) != IS_TRUE(nullable boolean)
+    // IS_FALSE(IS_FALSE(null)) = IS_FALSE(false) = true
+    // IS_TRUE(null) = false
+    final RexNode isFalseIsFalse = rexBuilder.makeCall(SqlStdOperatorTable.IS_FALSE, isFalse);
+    final RexCall result2 = (RexCall) simplify(isFalseIsFalse);
+    assertThat(result2.getType().isNullable(), is(false));
+    assertThat(result2.getOperator(), is((SqlOperator) SqlStdOperatorTable.IS_NOT_FALSE));
+    assertThat(result2.getOperands().size(), is(1));
+    assertThat(result2.getOperands().get(0), is(booleanInput));
+  }
+
+  private RexNode simplify(RexNode e) {
+    return new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, false,
+        RexUtil.EXECUTOR).simplify(e);
   }
 }
 

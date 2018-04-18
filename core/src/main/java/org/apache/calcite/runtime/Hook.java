@@ -35,6 +35,10 @@ public enum Hook {
    * in tests. */
   CURRENT_TIME,
 
+  /** Called to get stdin, stdout, stderr.
+   * Use this to re-assign streams in tests. */
+  STANDARD_STREAMS,
+
   /** Returns a boolean value, whether RelBuilder should simplify expressions.
    * Default true. */
   REL_BUILDER_SIMPLIFY,
@@ -46,6 +50,12 @@ public enum Hook {
 
   /** Called with the SQL string and parse tree, in an array. */
   PARSE_TREE,
+
+  /** Converts a SQL string to a
+   * {@link org.apache.calcite.jdbc.CalcitePrepare.Query} object. This hook is
+   * an opportunity to execute a {@link org.apache.calcite.rel.RelNode} query
+   * plan in the JDBC driver rather than the usual SQL string. */
+  STRING_TO_QUERY,
 
   /** Called with the generated Java plan, just before it is compiled by
    * Janino. */

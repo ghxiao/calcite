@@ -156,7 +156,8 @@ public final class LogicalWindow extends Window {
                 over.getAggOperator(),
                 over.getType(),
                 toInputRefs(over.operands),
-                aggMap.size());
+                aggMap.size(),
+                over.isDistinct());
         aggCalls.add(aggCall);
         aggMap.put(over, aggCall);
       }
@@ -311,7 +312,7 @@ public final class LogicalWindow extends Window {
     private final RexWindowBound lowerBound;
     private final RexWindowBound upperBound;
 
-    public WindowKey(
+    WindowKey(
         ImmutableBitSet groupSet,
         RelCollation orderKeys,
         boolean isRows,
@@ -346,15 +347,15 @@ public final class LogicalWindow extends Window {
 
     // Look up or create a window.
     RelCollation orderKeys = getCollation(
-      Lists.newArrayList(
-        Iterables.filter(aggWindow.orderKeys,
-          new PredicateImpl<RexFieldCollation>() {
-            public boolean test(RexFieldCollation rexFieldCollation) {
-              // If ORDER BY references constant (i.e. RexInputRef),
-              // then we can ignore such ORDER BY key.
-              return rexFieldCollation.left instanceof RexLocalRef;
-            }
-          })));
+        Lists.newArrayList(
+            Iterables.filter(aggWindow.orderKeys,
+              new PredicateImpl<RexFieldCollation>() {
+                public boolean test(RexFieldCollation rexFieldCollation) {
+                  // If ORDER BY references constant (i.e. RexInputRef),
+                  // then we can ignore such ORDER BY key.
+                  return rexFieldCollation.left instanceof RexLocalRef;
+                }
+              })));
     ImmutableBitSet groupSet =
         ImmutableBitSet.of(getProjectOrdinals(aggWindow.partitionKeys));
     final int groupLength = groupSet.length();

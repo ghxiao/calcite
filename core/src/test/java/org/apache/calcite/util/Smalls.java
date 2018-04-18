@@ -18,6 +18,8 @@ package org.apache.calcite.util;
 
 import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.java.AbstractQueryableTable;
+import org.apache.calcite.config.CalciteConnectionConfig;
+import org.apache.calcite.linq4j.AbstractEnumerable;
 import org.apache.calcite.linq4j.BaseQueryable;
 import org.apache.calcite.linq4j.Enumerable;
 import org.apache.calcite.linq4j.Enumerator;
@@ -28,6 +30,7 @@ import org.apache.calcite.linq4j.function.Deterministic;
 import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.function.Function2;
 import org.apache.calcite.linq4j.function.Parameter;
+import org.apache.calcite.linq4j.function.SemiStrict;
 import org.apache.calcite.linq4j.tree.Types;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -36,16 +39,24 @@ import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.runtime.SqlFunctions;
 import org.apache.calcite.schema.QueryableTable;
 import org.apache.calcite.schema.ScannableTable;
+import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.schema.Statistic;
+import org.apache.calcite.schema.Statistics;
 import org.apache.calcite.schema.TranslatableTable;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.schema.impl.ViewTable;
-import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 import com.google.common.collect.ImmutableList;
 
 import java.lang.reflect.Method;
+import java.sql.Date;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.List;
@@ -54,6 +65,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
+
 
 /**
  * Holder for various classes and functions used in tests as user-defined
@@ -73,6 +85,10 @@ public class Smalls {
   public static final Method MULTIPLICATION_TABLE_METHOD =
       Types.lookupMethod(Smalls.class, "multiplicationTable", int.class,
         int.class, Integer.class);
+  public static final Method FIBONACCI_TABLE_METHOD =
+      Types.lookupMethod(Smalls.class, "fibonacciTable");
+  public static final Method FIBONACCI2_TABLE_METHOD =
+      Types.lookupMethod(Smalls.class, "fibonacciTableWithLimit", long.class);
   public static final Method VIEW_METHOD =
       Types.lookupMethod(Smalls.class, "view", String.class);
   public static final Method STR_METHOD =
@@ -175,8 +191,7 @@ public class Smalls {
     final int offs = offset == null ? 0 : offset;
     return new AbstractQueryableTable(Object[].class) {
       public RelDataType getRowType(RelDataTypeFactory typeFactory) {
-        final RelDataTypeFactory.FieldInfoBuilder builder =
-            typeFactory.builder();
+        final RelDataTypeFactory.Builder builder = typeFactory.builder();
         builder.add("row_name", typeFactory.createJavaType(String.class));
         final RelDataType int_ = typeFactory.createJavaType(int.class);
         for (int i = 1; i <= ncol; i++) {
@@ -202,6 +217,72 @@ public class Smalls {
           }
         };
         return Linq4j.asEnumerable(table).asQueryable();
+      }
+    };
+  }
+
+  /** A function that generates the Fibonacci sequence.
+   * Interesting because it has one column and no arguments. */
+  public static ScannableTable fibonacciTable() {
+    return fibonacciTableWithLimit(-1L);
+  }
+
+  /** A function that generates the Fibonacci sequence.
+   * Interesting because it has one column and no arguments. */
+  public static ScannableTable fibonacciTableWithLimit(final long limit) {
+    return new ScannableTable() {
+      public RelDataType getRowType(RelDataTypeFactory typeFactory) {
+        return typeFactory.builder().add("N", SqlTypeName.BIGINT).build();
+      }
+
+      public Enumerable<Object[]> scan(DataContext root) {
+        return new AbstractEnumerable<Object[]>() {
+          public Enumerator<Object[]> enumerator() {
+            return new Enumerator<Object[]>() {
+              private long prev = 1;
+              private long current = 0;
+
+              public Object[] current() {
+                return new Object[] {current};
+              }
+
+              public boolean moveNext() {
+                final long next = current + prev;
+                if (limit >= 0 && next > limit) {
+                  return false;
+                }
+                prev = current;
+                current = next;
+                return true;
+              }
+
+              public void reset() {
+                prev = 0;
+                current = 1;
+              }
+
+              public void close() {
+              }
+            };
+          }
+        };
+      }
+
+      public Statistic getStatistic() {
+        return Statistics.UNKNOWN;
+      }
+
+      public Schema.TableType getJdbcTableType() {
+        return Schema.TableType.TABLE;
+      }
+
+      public boolean isRolledUp(String column) {
+        return false;
+      }
+
+      public boolean rolledUpColumnValidInsideAgg(String column, SqlCall call,
+          SqlNode parent, CalciteConnectionConfig config) {
+        return true;
       }
     };
   }
@@ -269,6 +350,17 @@ public class Smalls {
         }, "values (1), (3), " + s, ImmutableList.<String>of(), Arrays.asList("view"));
   }
 
+  public static TranslatableTable strView(String s) {
+    return new ViewTable(Object.class,
+        new RelProtoDataType() {
+          public RelDataType apply(RelDataTypeFactory typeFactory) {
+            return typeFactory.builder().add("c", SqlTypeName.VARCHAR, 100)
+                    .build();
+          }
+        }, "values (" + CalciteSqlDialect.DEFAULT.quoteStringLiteral(s) + ")",
+        ImmutableList.<String>of(), Arrays.asList("view"));
+  }
+
   public static TranslatableTable str(Object o, Object p) {
     assertThat(RexLiteral.validConstant(o, Litmus.THROW), is(true));
     assertThat(RexLiteral.validConstant(p, Litmus.THROW), is(true));
@@ -279,8 +371,8 @@ public class Smalls {
                 .build();
           }
         },
-        "values " + SqlDialect.CALCITE.quoteStringLiteral(o.toString())
-            + ", " + SqlDialect.CALCITE.quoteStringLiteral(p.toString()),
+        "values " + CalciteSqlDialect.DEFAULT.quoteStringLiteral(o.toString())
+            + ", " + CalciteSqlDialect.DEFAULT.quoteStringLiteral(p.toString()),
         ImmutableList.<String>of(), Arrays.asList("view"));
   }
 
@@ -359,6 +451,29 @@ public class Smalls {
     }
   }
 
+  /** Example of a semi-strict UDF.
+   * (Returns null if its parameter is null or if its length is 4.) */
+  public static class Null4Function {
+    @SemiStrict public static String eval(@Parameter(name = "s") String s) {
+      if (s == null || s.length() == 4) {
+        return null;
+      }
+      return s;
+    }
+  }
+
+  /** Example of a picky, semi-strict UDF.
+   * Throws {@link NullPointerException} if argument is null.
+   * Returns null if its argument's length is 8. */
+  public static class Null8Function {
+    @SemiStrict public static String eval(@Parameter(name = "s") String s) {
+      if (s.length() == 8) {
+        return null;
+      }
+      return s;
+    }
+  }
+
   /** Example of a UDF with a static {@code eval} method. Class is abstract,
    * but code-generator should not need to instantiate it. */
   public abstract static class MyDoubleFunction {
@@ -428,15 +543,25 @@ public class Smalls {
     private MultipleFunction() {}
 
     // Three overloads
-    public static String fun1(String x) { return x.toLowerCase(Locale.ROOT); }
-    public static int fun1(int x) { return x * 2; }
-    public static int fun1(int x, int y) { return x + y; }
+    public static String fun1(String x) {
+      return x.toLowerCase(Locale.ROOT);
+    }
+    public static int fun1(int x) {
+      return x * 2;
+    }
+    public static int fun1(int x, int y) {
+      return x + y;
+    }
 
     // Another method
-    public static int fun2(int x) { return x * 3; }
+    public static int fun2(int x) {
+      return x * 3;
+    }
 
     // Non-static method cannot be used because constructor is private
-    public int nonStatic(int x) { return x * 3; }
+    public int nonStatic(int x) {
+      return x * 3;
+    }
   }
 
   /** UDF class that provides user-defined functions for each data type. */
@@ -473,6 +598,29 @@ public class Smalls {
     public static java.sql.Time toTimeFun(Long v) {
       return v == null ? null : SqlFunctions.internalToTime(v.intValue());
     }
+
+    public static List arrayAppendFun(List v, Integer i) {
+      if (v == null || i == null) {
+        return null;
+      } else {
+        v.add(i);
+        return v;
+      }
+    }
+
+    /** Overloaded functions with DATE, TIMESTAMP and TIME arguments. */
+    public static long toLong(Date date) {
+      return date == null ? 0 : SqlFunctions.toLong(date);
+    }
+
+    public static long toLong(Timestamp timestamp) {
+      return timestamp == null ? 0 : SqlFunctions.toLong(timestamp);
+    }
+
+    public static long toLong(Time time) {
+      return time == null ? 0 : SqlFunctions.toLong(time);
+    }
+
   }
 
   /** Example of a user-defined aggregate function (UDAF). */
@@ -493,7 +641,11 @@ public class Smalls {
     }
   }
 
-  /** A generic interface for defining user defined aggregate functions */
+  /** A generic interface for defining user defined aggregate functions
+   *
+   * @param <A> accumulator type
+   * @param <V> value type
+   * @param <R> result type */
   private interface MyGenericAggFunction<A, V, R> {
     A init();
 
@@ -533,6 +685,88 @@ public class Smalls {
     }
     public static long add(long accumulator, int v) {
       return accumulator + v;
+    }
+    public static long merge(long accumulator0, long accumulator1) {
+      return accumulator0 + accumulator1;
+    }
+    public static long result(long accumulator) {
+      return accumulator;
+    }
+  }
+
+  /** Example of a user-defined aggregate function (UDAF). */
+  public static class MyTwoParamsSumFunctionFilter1 {
+    public MyTwoParamsSumFunctionFilter1() {
+    }
+    public int init() {
+      return 0;
+    }
+    public int add(int accumulator, int v1, int v2) {
+      if (v1 > v2) {
+        return accumulator + v1;
+      }
+      return accumulator;
+    }
+    public int merge(int accumulator0, int accumulator1) {
+      return accumulator0 + accumulator1;
+    }
+    public int result(int accumulator) {
+      return accumulator;
+    }
+  }
+
+  /** Example of a user-defined aggregate function (UDAF). */
+  public static class MyTwoParamsSumFunctionFilter2 {
+    public MyTwoParamsSumFunctionFilter2() {
+    }
+    public long init() {
+      return 0L;
+    }
+    public long add(long accumulator, int v1, String v2) {
+      if (v2.equals("Eric")) {
+        return accumulator + v1;
+      }
+      return accumulator;
+    }
+    public long merge(long accumulator0, long accumulator1) {
+      return accumulator0 + accumulator1;
+    }
+    public long result(long accumulator) {
+      return accumulator;
+    }
+  }
+
+  /** Example of a user-defined aggregate function (UDAF), whose methods are
+   * static. */
+  public static class MyThreeParamsSumFunctionWithFilter1 {
+    public static long init() {
+      return 0L;
+    }
+    public static long add(long accumulator, int v1, String v2, String v3) {
+      if (v2.equals(v3)) {
+        return accumulator + v1;
+      }
+      return accumulator;
+    }
+    public static long merge(long accumulator0, long accumulator1) {
+      return accumulator0 + accumulator1;
+    }
+    public static long result(long accumulator) {
+      return accumulator;
+    }
+  }
+
+  /** Example of a user-defined aggregate function (UDAF), whose methods are
+   * static. olny for validate to get exact function by calcite*/
+  public static class MyThreeParamsSumFunctionWithFilter2 {
+    public static long init() {
+      return 0L;
+    }
+    public static long add(long accumulator, int v1, int v2, int v3) {
+      if (v3 > 250) {
+        return accumulator + v1 + v2;
+      }
+      return accumulator;
     }
     public static long merge(long accumulator0, long accumulator1) {
       return accumulator0 + accumulator1;
@@ -656,7 +890,7 @@ public class Smalls {
 
     @SuppressWarnings("unused")
     public final WideProductSale[] prod = {
-      new WideProductSale(100, 10)
+        new WideProductSale(100, 10)
     };
   }
 

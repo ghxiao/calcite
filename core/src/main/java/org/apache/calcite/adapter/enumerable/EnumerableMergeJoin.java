@@ -90,7 +90,7 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
     final RelOptCluster cluster = right.getCluster();
     RelTraitSet traitSet = cluster.traitSet();
     if (traitSet.isEnabled(RelCollationTraitDef.INSTANCE)) {
-      final RelMetadataQuery mq = RelMetadataQuery.instance();
+      final RelMetadataQuery mq = cluster.getMetadataQuery();
       final List<RelCollation> collations =
           RelMdCollation.mergeJoin(mq, left, right, leftKeys, rightKeys);
       traitSet = traitSet.replace(collations);
@@ -154,11 +154,11 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
                   right.getRowType().getFieldList().get(pair.right).getType()));
       final Type keyClass = typeFactory.getJavaClass(keyType);
       leftExpressions.add(
-         Types.castIfNecessary(keyClass,
-             leftResult.physType.fieldReference(left_, pair.left)));
+          Types.castIfNecessary(keyClass,
+              leftResult.physType.fieldReference(left_, pair.left)));
       rightExpressions.add(
-         Types.castIfNecessary(keyClass,
-             rightResult.physType.fieldReference(right_, pair.right)));
+          Types.castIfNecessary(keyClass,
+              rightResult.physType.fieldReference(right_, pair.right)));
     }
     final PhysType leftKeyPhysType =
         leftResult.physType.project(leftKeys, JavaRowFormat.LIST);

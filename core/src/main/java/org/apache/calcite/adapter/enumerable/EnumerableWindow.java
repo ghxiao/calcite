@@ -49,6 +49,7 @@ import org.apache.calcite.rex.RexWindowBound;
 import org.apache.calcite.runtime.SortedMultiMap;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.util.BuiltInMethod;
+import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
 
@@ -174,10 +175,11 @@ public class EnumerableWindow extends Window implements EnumerableRel {
 
     PhysType inputPhysType = result.physType;
 
+    final int w = implementor.windowCount++;
     ParameterExpression prevStart =
-        Expressions.parameter(int.class, builder.newName("prevStart"));
+        Expressions.parameter(int.class, builder.newName("prevStart" + w));
     ParameterExpression prevEnd =
-        Expressions.parameter(int.class, builder.newName("prevEnd"));
+        Expressions.parameter(int.class, builder.newName("prevEnd" + w));
 
     builder.add(Expressions.declare(0, prevStart, null));
     builder.add(Expressions.declare(0, prevEnd, null));
@@ -212,8 +214,7 @@ public class EnumerableWindow extends Window implements EnumerableRel {
       }
 
       // The output from this stage is the input plus the aggregate functions.
-      final RelDataTypeFactory.FieldInfoBuilder typeBuilder =
-          typeFactory.builder();
+      final RelDataTypeFactory.Builder typeBuilder = typeFactory.builder();
       typeBuilder.addAll(inputPhysType.getRowType().getFieldList());
       for (AggImpState agg : aggs) {
         typeBuilder.add(agg.call.name, agg.call.type);
@@ -277,7 +278,7 @@ public class EnumerableWindow extends Window implements EnumerableRel {
 
       final List<Expression> outputRow = new ArrayList<Expression>();
       int fieldCountWithAggResults =
-        inputPhysType.getRowType().getFieldCount();
+          inputPhysType.getRowType().getFieldCount();
       for (int i = 0; i < fieldCountWithAggResults; i++) {
         outputRow.add(
             inputPhysType.fieldReference(
@@ -521,7 +522,7 @@ public class EnumerableWindow extends Window implements EnumerableRel {
   }
 
   private Function<BlockBuilder, WinAggFrameResultContext>
-  getBlockBuilderWinAggFrameResultContextFunction(
+      getBlockBuilderWinAggFrameResultContextFunction(
       final JavaTypeFactory typeFactory, final Result result,
       final List<Expression> translatedConstants,
       final Expression comparator_,
@@ -788,6 +789,22 @@ public class EnumerableWindow extends Window implements EnumerableRel {
             public List<? extends RelDataType> parameterRelTypes() {
               return EnumUtils.fieldRowTypes(result.physType.getRowType(),
                   constants, agg.call.getArgList());
+            }
+
+            public List<ImmutableBitSet> groupSets() {
+              throw new UnsupportedOperationException();
+            }
+
+            public List<Integer> keyOrdinals() {
+              throw new UnsupportedOperationException();
+            }
+
+            public List<? extends RelDataType> keyRelTypes() {
+              throw new UnsupportedOperationException();
+            }
+
+            public List<? extends Type> keyTypes() {
+              throw new UnsupportedOperationException();
             }
           };
       String aggName = "a" + agg.aggIdx;

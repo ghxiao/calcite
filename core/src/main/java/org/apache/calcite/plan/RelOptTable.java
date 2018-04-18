@@ -20,10 +20,12 @@ import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelReferentialConstraint;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.schema.ColumnStrategy;
 import org.apache.calcite.schema.Wrapper;
 import org.apache.calcite.util.ImmutableBitSet;
 
@@ -98,6 +100,12 @@ public interface RelOptTable extends Wrapper {
   boolean isKey(ImmutableBitSet columns);
 
   /**
+   * Returns the referential constraints existing for this table. These constraints
+   * are represented over other tables using {@link RelReferentialConstraint} nodes.
+   */
+  List<RelReferentialConstraint> getReferentialConstraints();
+
+  /**
    * Generates code for this table.
    *
    * @param clazz The desired collection class; for example {@code Queryable}.
@@ -111,6 +119,10 @@ public interface RelOptTable extends Wrapper {
    * table.
    */
   RelOptTable extend(List<RelDataTypeField> extendedFields);
+
+  /** Returns a list describing how each column is populated. The list has the
+   *  same number of entries as there are fields, and is immutable. */
+  List<ColumnStrategy> getColumnStrategies();
 
   /** Can expand a view into relational expressions. */
   interface ViewExpander {

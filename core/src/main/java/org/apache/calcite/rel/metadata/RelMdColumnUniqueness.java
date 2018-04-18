@@ -332,8 +332,11 @@ public class RelMdColumnUniqueness
     final Set<List<Comparable>> set = new HashSet<>();
     final List<Comparable> values = new ArrayList<>();
     for (ImmutableList<RexLiteral> tuple : rel.tuples) {
-      for (RexLiteral literal : tuple) {
-        values.add(NullSentinel.mask(literal.getValue()));
+      for (int column : columns) {
+        final RexLiteral literal = tuple.get(column);
+        values.add(literal.isNull()
+            ? NullSentinel.INSTANCE
+            : literal.getValueAs(Comparable.class));
       }
       if (!set.add(ImmutableList.copyOf(values))) {
         return false;
@@ -403,7 +406,7 @@ public class RelMdColumnUniqueness
 
   /** Splits a column set between left and right sets. */
   private static Pair<ImmutableBitSet, ImmutableBitSet>
-  splitLeftAndRightColumns(int leftCount, final ImmutableBitSet columns) {
+      splitLeftAndRightColumns(int leftCount, final ImmutableBitSet columns) {
     ImmutableBitSet.Builder leftBuilder = ImmutableBitSet.builder();
     ImmutableBitSet.Builder rightBuilder = ImmutableBitSet.builder();
     for (int bit : columns) {

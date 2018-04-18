@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.rex;
 
+import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -323,7 +324,10 @@ public class RexProgramBuilder {
    *              sub-expression exists.
    */
   private RexLocalRef registerInternal(RexNode expr, boolean force) {
-    expr = new RexSimplify(rexBuilder, false, RexUtil.EXECUTOR).simplify(expr);
+    final RexSimplify simplify =
+        new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, false,
+            RexUtil.EXECUTOR);
+    expr = simplify.simplify(expr);
 
     RexLocalRef ref;
     final Pair<String, String> key;
@@ -500,7 +504,7 @@ public class RexProgramBuilder {
    * expressions must have maximum depth 1)
    * </ul>
    *
-   * there are additional constraints:
+   * <p>there are additional constraints:
    *
    * <ul>
    * <li>Expressions appear in the left-deep order they are needed by
@@ -543,10 +547,14 @@ public class RexProgramBuilder {
       final RexNode condition,
       final RelDataType outputRowType,
       boolean normalize,
-      boolean simplify) {
+      boolean simplify_) {
+    RexSimplify simplify = null;
+    if (simplify_) {
+      simplify = new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, false,
+          RexUtil.EXECUTOR);
+    }
     return new RexProgramBuilder(rexBuilder, inputRowType, exprList,
-        projectList, condition, outputRowType, normalize,
-        simplify ? new RexSimplify(rexBuilder, false, RexUtil.EXECUTOR) : null);
+        projectList, condition, outputRowType, normalize, simplify);
   }
 
   @Deprecated // to be removed before 2.0
@@ -693,15 +701,14 @@ public class RexProgramBuilder {
    *
    * <p>All expressions become common sub-expressions. For example, the query
    *
-   * <pre>{@code
-   * SELECT x + 1 AS p, x + y AS q FROM (
+   * <blockquote><pre>SELECT x + 1 AS p, x + y AS q FROM (
    *   SELECT a + b AS x, c AS y
    *   FROM t
-   *   WHERE c = 6)}</pre>
+   *   WHERE c = 6)}</pre></blockquote>
    *
-   * would be represented as the programs
+   * <p>would be represented as the programs
    *
-   * <pre>
+   * <blockquote><pre>
    *   Calc:
    *       Projects={$2, $3},
    *       Condition=null,
@@ -710,11 +717,11 @@ public class RexProgramBuilder {
    *       Projects={$3, $2},
    *       Condition={$4}
    *       Exprs={$0, $1, $2, $0 + $1, $2 = 6}
-   * </pre>
+   * </pre></blockquote>
    *
    * <p>The merged program is
    *
-   * <pre>
+   * <blockquote><pre>
    *   Calc(
    *      Projects={$4, $5}
    *      Condition=$6
@@ -725,7 +732,7 @@ public class RexProgramBuilder {
    *             4: ($3 + 1)  // p = x + 1
    *             5: ($3 + $2) // q = x + y
    *             6: ($2 = 6)  // c = 6
-   * </pre>
+   * </pre></blockquote>
    *
    * <p>Another example:</p>
    *
@@ -738,7 +745,7 @@ public class RexProgramBuilder {
    * WHERE x = 5</pre>
    * </blockquote>
    *
-   * becomes
+   * <p>becomes
    *
    * <blockquote>
    * <pre>SELECT a + b AS x, c AS y
@@ -1014,7 +1021,7 @@ public class RexProgramBuilder {
   private class RegisterOutputShuttle extends RegisterShuttle {
     private final List<RexNode> localExprList;
 
-    public RegisterOutputShuttle(List<RexNode> localExprList) {
+    RegisterOutputShuttle(List<RexNode> localExprList) {
       super();
       this.localExprList = localExprList;
     }

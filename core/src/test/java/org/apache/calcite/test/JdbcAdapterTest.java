@@ -54,7 +54,7 @@ public class JdbcAdapterTest {
   @Test public void testValuesPlan() {
     final String sql = "select * from \"days\", (values 1, 2) as t(c)";
     final String explain = "PLAN="
-        + "EnumerableCalc(expr#0..2=[{inputs}], day=[$t1], week_day=[$t2], EXPR$0=[$t0])\n"
+        + "EnumerableCalc(expr#0..2=[{inputs}], day=[$t1], week_day=[$t2], C=[$t0])\n"
         + "  EnumerableJoin(condition=[true], joinType=[inner])\n"
         + "    EnumerableValues(tuples=[[{ 1 }, { 2 }]])\n"
         + "    JdbcToEnumerableConverter\n"
@@ -416,6 +416,30 @@ public class JdbcAdapterTest {
 
     rs.close();
     calciteConnection.close();
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2206">[CALCITE-2206]
+   * JDBC adapter incorrectly pushes windowed aggregates down to HSQLDB</a>. */
+  @Test public void testOverNonSupportedDialect() {
+    final String sql = "select \"store_id\", \"account_id\", \"exp_date\",\n"
+        + " \"time_id\", \"category_id\", \"currency_id\", \"amount\",\n"
+        + " last_value(\"time_id\") over () as \"last_version\"\n"
+        + "from \"expense_fact\"";
+    final String explain = "PLAN="
+        + "EnumerableWindow(window#0=[window(partition {} "
+        + "order by [] range between UNBOUNDED PRECEDING and "
+        + "UNBOUNDED FOLLOWING aggs [LAST_VALUE($3)])])\n"
+        + "  JdbcToEnumerableConverter\n"
+        + "    JdbcTableScan(table=[[foodmart, expense_fact]])\n";
+    CalciteAssert
+        .model(JdbcTest.FOODMART_MODEL)
+        .enable(CalciteAssert.DB == DatabaseInstance.HSQLDB)
+        .query(sql)
+        .explainContains(explain)
+        .runs()
+        .planHasSql("SELECT *\n"
+            + "FROM \"foodmart\".\"expense_fact\"");
   }
 
   /** Test case for

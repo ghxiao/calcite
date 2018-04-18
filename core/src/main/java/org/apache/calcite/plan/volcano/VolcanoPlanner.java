@@ -139,7 +139,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
    * operands based on the class of the RelNode.</p>
    */
   private final Multimap<Class<? extends RelNode>, RelOptRuleOperand>
-  classOperands = LinkedListMultimap.create();
+      classOperands = LinkedListMultimap.create();
 
   /**
    * List of all sets. Used only for debugging.
@@ -282,7 +282,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
   //~ Methods ----------------------------------------------------------------
 
   protected VolcanoPlannerPhaseRuleMappingInitializer
-  getPhaseRuleMappingInitializer() {
+      getPhaseRuleMappingInitializer() {
     return new VolcanoPlannerPhaseRuleMappingInitializer() {
       public void initialize(
           Map<VolcanoPlannerPhase, Set<String>> phaseRuleMap) {
@@ -888,7 +888,6 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
    * Checks internal consistency.
    */
   protected void validate() {
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
     for (RelSet set : allSets) {
       if (set.equivalentSet != null) {
         throw new AssertionError(
@@ -902,7 +901,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
               + "] is in wrong set [" + set + "]");
         }
         for (RelNode rel : subset.getRels()) {
-          RelOptCost relCost = getCost(rel, mq);
+          RelOptCost relCost = getCost(rel, rel.getCluster().getMetadataQuery());
           if (relCost.isLt(subset.bestCost)) {
             throw new AssertionError(
                 "rel [" + rel.getDescription()
@@ -1169,7 +1168,6 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
    * @see #normalizePlan(String)
    */
   public void dump(PrintWriter pw) {
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
     pw.println("Root: " + root.getDescription());
     pw.println("Original rel:");
     pw.println(originalRootString);
@@ -1222,6 +1220,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
           if (importance != null) {
             pw.print(", importance=" + importance);
           }
+          RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
           pw.print(", rowcount=" + mq.getRowCount(rel));
           pw.println(", cumulative cost=" + getCost(rel, mq));
         }
@@ -1277,8 +1276,6 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
         // get merged.)
         final RelSubset subset = mapRel2Subset.put(rel, equivRelSubset);
         assert subset != null;
-        //boolean existed = subset.rels.remove(rel);
-        //assert existed : "rel was not known to its subset";
         boolean existed = subset.set.rels.remove(rel);
         assert existed : "rel was not known to its set";
         final RelSubset equivSubset = getSubset(equivRel);
@@ -1653,7 +1650,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     // 100. We think this happens because the back-links to parents are
     // not established. So, give the subset another change to figure out
     // its cost.
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     subset.propagateCostImprovements(this, mq, rel, new HashSet<RelSubset>());
 
     return subset;
@@ -1718,7 +1715,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
    * &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;MockTableImplRel.FENNEL_EXEC(
    * table=[CATALOG, SALES, EMP])</blockquote>
    *
-   * becomes
+   * <p>becomes
    *
    * <blockquote>
    * FennelAggRel.FENNEL_EXEC(child=Subset#{0}.FENNEL_EXEC, groupCount=1,

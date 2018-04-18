@@ -69,7 +69,7 @@ public class SqlTypeExplicitPrecedenceList
    * @see Glossary#SQL2003 SQL:2003 Part 2 Section 9.5
    */
   private static final Map<SqlTypeName, SqlTypeExplicitPrecedenceList>
-  TYPE_NAME_TO_PRECEDENCE_LIST =
+      TYPE_NAME_TO_PRECEDENCE_LIST =
       ImmutableMap.<SqlTypeName, SqlTypeExplicitPrecedenceList>builder()
           .put(SqlTypeName.BOOLEAN, list(SqlTypeName.BOOLEAN))
           .put(SqlTypeName.TINYINT, numeric(SqlTypeName.TINYINT))
@@ -87,7 +87,8 @@ public class SqlTypeExplicitPrecedenceList
           .put(SqlTypeName.VARBINARY, list(SqlTypeName.VARBINARY))
           .put(SqlTypeName.DATE, list(SqlTypeName.DATE))
           .put(SqlTypeName.TIME, list(SqlTypeName.TIME))
-          .put(SqlTypeName.TIMESTAMP, list(SqlTypeName.TIMESTAMP))
+          .put(SqlTypeName.TIMESTAMP,
+              list(SqlTypeName.TIMESTAMP, SqlTypeName.DATE, SqlTypeName.TIME))
           .put(SqlTypeName.INTERVAL_YEAR,
               list(SqlTypeName.YEAR_INTERVAL_TYPES))
           .put(SqlTypeName.INTERVAL_YEAR_MONTH,
@@ -150,8 +151,8 @@ public class SqlTypeExplicitPrecedenceList
 
   // implement RelDataTypePrecedenceList
   public int compareTypePrecedence(RelDataType type1, RelDataType type2) {
-    assert containsType(type1);
-    assert containsType(type2);
+    assert containsType(type1) : type1;
+    assert containsType(type2) : type2;
 
     int p1 =
         getListPosition(

@@ -16,6 +16,8 @@
  */
 package org.apache.calcite.test;
 
+import org.apache.calcite.plan.Context;
+import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptUtil;
@@ -24,12 +26,14 @@ import org.apache.calcite.plan.hep.HepProgram;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.metadata.ChainedRelMetadataProvider;
 import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.sql2rel.RelDecorrelator;
+import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.util.Closer;
 
 import com.google.common.base.Function;
@@ -144,7 +148,8 @@ abstract class RelOptTestBase extends SqlToRelTestBase {
     planner.registerMetadataProviders(list);
     RelMetadataProvider plannerChain =
         ChainedRelMetadataProvider.of(list);
-    relInitial.getCluster().setMetadataProvider(plannerChain);
+    final RelOptCluster cluster = relInitial.getCluster();
+    cluster.setMetadataProvider(plannerChain);
 
     RelNode relBefore;
     if (preProgram == null) {
@@ -167,7 +172,9 @@ abstract class RelOptTestBase extends SqlToRelTestBase {
       final String planMid = NL + RelOptUtil.toString(r);
       diffRepos.assertEquals("planMid", "${planMid}", planMid);
       SqlToRelTestBase.assertValid(r);
-      r = RelDecorrelator.decorrelateQuery(r);
+      final RelBuilder relBuilder =
+          RelFactories.LOGICAL_BUILDER.create(cluster, null);
+      r = RelDecorrelator.decorrelateQuery(r, relBuilder);
     }
     final String planAfter = NL + RelOptUtil.toString(r);
     if (unchanged) {
@@ -218,6 +225,10 @@ abstract class RelOptTestBase extends SqlToRelTestBase {
     public Sql with(HepProgram program) {
       return new Sql(sql, preProgram, new HepPlanner(program), hooks,
           transforms);
+    }
+
+    public Sql withRule(RelOptRule rule) {
+      return with(HepProgram.builder().addRuleInstance(rule).build());
     }
 
     /** Adds a transform that will be applied to {@link #tester}
@@ -275,6 +286,14 @@ abstract class RelOptTestBase extends SqlToRelTestBase {
           });
     }
 
+    public Sql withContext(final Context context) {
+      return withTransform(
+          new Function<Tester, Tester>() {
+            public Tester apply(Tester tester) {
+              return tester.withContext(context);
+            }
+          });
+    }
 
     public void check() {
       check(false);
@@ -296,7 +315,6 @@ abstract class RelOptTestBase extends SqlToRelTestBase {
         checkPlanning(t, preProgram, hepPlanner, sql, unchanged);
       }
     }
-
   }
 
 }

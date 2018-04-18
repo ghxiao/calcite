@@ -257,8 +257,8 @@ public abstract class SqlTypeUtil {
   public static boolean isOfSameTypeName(
       SqlTypeName typeName,
       RelDataType type) {
-    return SqlTypeName.ANY.equals(typeName)
-        || typeName.equals(type.getSqlTypeName());
+    return SqlTypeName.ANY == typeName
+        || typeName == type.getSqlTypeName();
   }
 
   /**
@@ -715,6 +715,13 @@ public abstract class SqlTypeUtil {
       return true;
     }
 
+    if (fromType.getSqlTypeName() == SqlTypeName.ARRAY) {
+      if (toType.getSqlTypeName() != SqlTypeName.ARRAY) {
+        return false;
+      }
+      return canAssignFrom(toType.getComponentType(), fromType.getComponentType());
+    }
+
     if (areCharacterSetsMismatched(toType, fromType)) {
       return false;
     }
@@ -852,8 +859,8 @@ public abstract class SqlTypeUtil {
     // where internally a cast across character repertoires is OK.  Should
     // probably clean that up.
 
-    SqlTypeAssignmentRules rules = SqlTypeAssignmentRules.instance();
-    return rules.canCastFrom(toTypeName, fromTypeName, coerce);
+    SqlTypeAssignmentRules rules = SqlTypeAssignmentRules.instance(coerce);
+    return rules.canCastFrom(toTypeName, fromTypeName);
   }
 
   /**
@@ -1103,10 +1110,6 @@ public abstract class SqlTypeUtil {
       return true;
     }
 
-    if (isAny(type1) || isAny(type2)) {
-      return true;
-    }
-
     if (type1.isNullable() == type2.isNullable()) {
       // If types have the same nullability and they weren't equal above,
       // they must be different.
@@ -1233,9 +1236,15 @@ public abstract class SqlTypeUtil {
       return true;
     }
 
-    // If one of the operators is of type 'ANY', return true.
+    // If one of the arguments is of type 'ANY', return true.
     if (family1 == SqlTypeFamily.ANY
         || family2 == SqlTypeFamily.ANY) {
+      return true;
+    }
+
+    // If one of the arguments is of type 'NULL', return true.
+    if (family1 == SqlTypeFamily.NULL
+        || family2 == SqlTypeFamily.NULL) {
       return true;
     }
 
@@ -1307,6 +1316,10 @@ public abstract class SqlTypeUtil {
       return -1;
     }
     return Integer.compare(p0, p1);
+  }
+
+  public static boolean isArray(RelDataType type) {
+    return type.getSqlTypeName() == SqlTypeName.ARRAY;
   }
 }
 

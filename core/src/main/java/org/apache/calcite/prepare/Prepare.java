@@ -23,6 +23,7 @@ import org.apache.calcite.jdbc.CalcitePrepare;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.jdbc.CalciteSchema.LatticeEntry;
 import org.apache.calcite.plan.Convention;
+import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptLattice;
 import org.apache.calcite.plan.RelOptMaterialization;
 import org.apache.calcite.plan.RelOptPlanner;
@@ -33,6 +34,8 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
+import org.apache.calcite.rel.RelVisitor;
+import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalTableModify;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -40,6 +43,7 @@ import org.apache.calcite.rex.RexExecutorImpl;
 import org.apache.calcite.runtime.Bindable;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.runtime.Typed;
+import org.apache.calcite.schema.ColumnStrategy;
 import org.apache.calcite.schema.ExtensibleTable;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.Wrapper;
@@ -84,7 +88,6 @@ public abstract class Prepare {
 
   protected final CalcitePrepare.Context context;
   protected final CatalogReader catalogReader;
-  protected String queryString = null;
   /**
    * Convention via which results should be returned by execution.
    */
@@ -140,10 +143,12 @@ public abstract class Prepare {
 
     final List<RelOptMaterialization> materializationList = new ArrayList<>();
     for (Materialization materialization : materializations) {
+      List<String> qualifiedTableName = materialization.materializedTable.path();
       materializationList.add(
           new RelOptMaterialization(materialization.tableRel,
               materialization.queryRel,
-              materialization.starRelOptTable));
+              materialization.starRelOptTable,
+              qualifiedTableName));
     }
 
     final List<RelOptLattice> latticeList = new ArrayList<>();
@@ -158,6 +163,27 @@ public abstract class Prepare {
     }
 
     final RelTraitSet desiredTraits = getDesiredRootTraitSet(root);
+
+    // Work around
+    //   [CALCITE-1774] Allow rules to be registered during planning process
+    // by briefly creating each kind of physical table to let it register its
+    // rules. The problem occurs when plans are created via RelBuilder, not
+    // the usual process (SQL and SqlToRelConverter.Config.isConvertTableAccess
+    // = true).
+    final RelVisitor visitor = new RelVisitor() {
+      @Override public void visit(RelNode node, int ordinal, RelNode parent) {
+        if (node instanceof TableScan) {
+          final RelOptCluster cluster = node.getCluster();
+          final RelOptTable.ToRelContext context =
+              RelOptUtil.getContext(cluster);
+          final RelNode r = node.getTable().toRel(context);
+          planner.registerClass(r);
+        }
+        super.visit(node, ordinal, parent);
+      }
+    };
+    visitor.go(root.rel);
+
     final Program program = getProgram();
     final RelNode rootRel4 = program.run(
         planner, root.rel, desiredTraits, materializationList, latticeList);
@@ -215,8 +241,6 @@ public abstract class Prepare {
       Class runtimeContextClass,
       SqlValidator validator,
       boolean needsValidation) {
-    queryString = sqlQuery.toString();
-
     init(runtimeContextClass);
 
     final SqlToRelConverter.ConfigBuilder builder =
@@ -406,16 +430,18 @@ public abstract class Prepare {
    * for {@link #columnHasDefaultValue}. */
   public abstract static class AbstractPreparingTable
       implements PreparingTable {
+    @SuppressWarnings("deprecation")
     public boolean columnHasDefaultValue(RelDataType rowType, int ordinal,
         InitializerContext initializerContext) {
+      // This method is no longer used
       final Table table = this.unwrap(Table.class);
       if (table != null && table instanceof Wrapper) {
         final InitializerExpressionFactory initializerExpressionFactory =
             ((Wrapper) table).unwrap(InitializerExpressionFactory.class);
         if (initializerExpressionFactory != null) {
-          return !initializerExpressionFactory
+          return initializerExpressionFactory
               .newColumnDefaultValue(this, ordinal, initializerContext)
-              .getType().getSqlTypeName().equals(SqlTypeName.NULL);
+              .getType().getSqlTypeName() != SqlTypeName.NULL;
         }
       }
       if (ordinal >= rowType.getFieldList().size()) {
@@ -453,6 +479,10 @@ public abstract class Prepare {
     /** Implementation-specific code to instantiate a new {@link RelOptTable}
      * based on a {@link Table} that has been extended. */
     protected abstract RelOptTable extend(Table extendedTable);
+
+    public List<ColumnStrategy> getColumnStrategies() {
+      return RelOptTableImpl.columnStrategies(AbstractPreparingTable.this);
+    }
   }
 
   /**

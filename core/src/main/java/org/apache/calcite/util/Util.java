@@ -38,11 +38,10 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Sets;
 
 import org.slf4j.Logger;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
@@ -86,6 +85,7 @@ import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -227,8 +227,10 @@ public class Util {
    * you are not interested in, but you don't want the compiler to warn that
    * you are not using it.
    */
-  public static boolean discard(boolean b) {
-    return b;
+  public static void discard(boolean b) {
+    if (false) {
+      discard(b);
+    }
   }
 
   /**
@@ -665,7 +667,7 @@ public class Util {
    * underscore followed by the hex code of the character; and underscores are
    * doubled.</p>
    *
-   * Examples:
+   * <p>Examples:
    *
    * <ul>
    * <li><code>toJavaId("foo")</code> returns <code>"foo"</code>
@@ -740,7 +742,7 @@ public class Util {
   /**
    * Converts a list of a string, with commas between elements.
    *
-   * For example,
+   * <p>For example,
    * <code>commaList(Arrays.asList({"a", "b"}))</code>
    * returns "a, b".
    *
@@ -944,7 +946,7 @@ public class Util {
    * <pre><code>int x = Util.deprecated(0, false);</code></pre>
    * </blockquote>
    *
-   * but the usual usage is to pass in a descriptive string.
+   * <p>but the usual usage is to pass in a descriptive string.
    *
    * <h3>Examples</h3>
    *
@@ -1265,7 +1267,7 @@ public class Util {
    * <blockquote>"std offset dst [offset],start[/time],end[/time]"
    * </blockquote>
    *
-   * where:
+   * <p>where:
    *
    * <ul>
    * <li>'std' specifies the abbrev of the time zone.
@@ -1536,121 +1538,6 @@ public class Util {
   }
 
   /**
-   * Runs an external application.
-   *
-   * @param cmdarray  command and arguments, see {@link ProcessBuilder}
-   * @param logger    if not null, command and exit status will be logged
-   * @param appInput  if not null, data will be copied to application's stdin
-   * @param appOutput if not null, data will be captured from application's
-   *                  stdout and stderr
-   * @return application process exit value
-   * @throws IOException
-   * @throws InterruptedException
-   */
-  @Deprecated // to be removed before 2.0
-  public static int runApplication(
-      String[] cmdarray,
-      Logger logger,
-      Reader appInput,
-      Writer appOutput) throws IOException, InterruptedException {
-    return runAppProcess(
-        newAppProcess(cmdarray),
-        logger,
-        appInput,
-        appOutput);
-  }
-
-  /**
-   * Constructs a {@link ProcessBuilder} to run an external application.
-   *
-   * @param cmdarray command and arguments.
-   * @return a ProcessBuilder.
-   */
-  @Deprecated // to be removed before 2.0
-  public static ProcessBuilder newAppProcess(String[] cmdarray) {
-    // Concatenate quoted words from cmdarray.
-    // REVIEW mb 2/24/09 Why is this needed?
-    StringBuilder buf = new StringBuilder();
-    for (int i = 0; i < cmdarray.length; ++i) {
-      if (i > 0) {
-        buf.append(" ");
-      }
-      buf.append('"');
-      buf.append(cmdarray[i]);
-      buf.append('"');
-    }
-    String fullcmd = buf.toString();
-    buf.setLength(0);
-    return new ProcessBuilder(cmdarray);
-  }
-
-
-  /**
-   * Runs an external application process.
-   *
-   * @param pb        ProcessBuilder for the application; might be
-   *                  returned by {@link #newAppProcess}.
-   * @param logger    if not null, command and exit status will be logged here
-   * @param appInput  if not null, data will be copied to application's stdin
-   * @param appOutput if not null, data will be captured from application's
-   *                  stdout and stderr
-   * @return application process exit value
-   * @throws IOException
-   * @throws InterruptedException
-   */
-  public static int runAppProcess(
-      ProcessBuilder pb,
-      Logger logger,
-      Reader appInput,
-      Writer appOutput) throws IOException, InterruptedException {
-    pb.redirectErrorStream(true);
-    if (logger != null) {
-      logger.info("start process: " + pb.command());
-    }
-    Process p = pb.start();
-
-    // Setup the input/output streams to the subprocess.
-    // The buffering here is arbitrary. Javadocs strongly encourage
-    // buffering, but the size needed is very dependent on the
-    // specific application being run, the size of the input
-    // provided by the caller, and the amount of output expected.
-    // Since this method is currently used only by unit tests,
-    // large-ish fixed buffer sizes have been chosen. If this
-    // method becomes used for something in production, it might
-    // be better to have the caller provide them as arguments.
-    if (appInput != null) {
-      OutputStream out =
-          new BufferedOutputStream(
-              p.getOutputStream(),
-              100 * 1024);
-      int c;
-      while ((c = appInput.read()) != -1) {
-        out.write(c);
-      }
-      out.flush();
-    }
-    if (appOutput != null) {
-      InputStream in =
-          new BufferedInputStream(
-              p.getInputStream(),
-              100 * 1024);
-      int c;
-      while ((c = in.read()) != -1) {
-        appOutput.write(c);
-      }
-      appOutput.flush();
-      in.close();
-    }
-    p.waitFor();
-
-    int status = p.exitValue();
-    if (logger != null) {
-      logger.info("exit status=" + status + " from " + pb.command());
-    }
-    return status;
-  }
-
-  /**
    * Converts a list whose members are automatically down-cast to a given
    * type.
    *
@@ -1736,7 +1623,7 @@ public class Util {
    * &nbsp;&nbsp;&nbsp;&nbsp;print(i);<br>
    * }</code></blockquote>
    *
-   * will print 1, 2, 4.
+   * <p>will print 1, 2, 4.
    *
    * @param iterable      Iterable
    * @param includeFilter Class whose instances to include
@@ -2118,6 +2005,38 @@ public class Util {
     return -1;
   }
 
+  /** Converts a list into a list with unique elements.
+   *
+   * <p>The order is preserved; the second and subsequent occurrences are
+   * removed.
+   *
+   * <p>If the list is already unique it is returned unchanged. */
+  public static <E> List<E> distinctList(List<E> list) {
+    if (isDistinct(list)) {
+      return list;
+    }
+    return ImmutableList.copyOf(new LinkedHashSet<>(list));
+  }
+
+  /** Converts an iterable into a list with unique elements.
+   *
+   * <p>The order is preserved; the second and subsequent occurrences are
+   * removed.
+   *
+   * <p>If {@code iterable} is a unique list it is returned unchanged. */
+  public static <E> List<E> distinctList(Iterable<E> keys) {
+    if (keys instanceof Set) {
+      return ImmutableList.copyOf(keys);
+    }
+    if (keys instanceof List) {
+      @SuppressWarnings("unchecked") final List<E> list = (List) keys;
+      if (isDistinct(list)) {
+        return list;
+      }
+    }
+    return ImmutableList.copyOf(Sets.newLinkedHashSet(keys));
+  }
+
   /** Returns whether two collections have any elements in common. */
   public static <E> boolean intersects(Collection<E> c0, Collection<E> c1) {
     for (E e : c1) {
@@ -2357,8 +2276,8 @@ public class Util {
 
   /** Returns a copy of a list of lists, making the component lists immutable if
    * they are not already. */
-  public static <E> List<List<E>>
-  immutableCopy(Iterable<? extends Iterable<E>> lists) {
+  public static <E> List<List<E>> immutableCopy(
+      Iterable<? extends Iterable<E>> lists) {
     int n = 0;
     for (Iterable<E> list : lists) {
       if (!(list instanceof ImmutableList)) {
@@ -2414,10 +2333,18 @@ public class Util {
     return reader(new FileInputStream(file));
   }
 
-  /** Creates a {@link Calendar} in the GMT time zone and root locale.
+  /** Creates a {@link Calendar} in the UTC time zone and root locale.
    * Does not use the time zone or locale. */
   public static Calendar calendar() {
-    return Calendar.getInstance(DateTimeUtils.GMT_ZONE, Locale.ROOT);
+    return Calendar.getInstance(DateTimeUtils.UTC_ZONE, Locale.ROOT);
+  }
+
+  /** Creates a {@link Calendar} in the UTC time zone and root locale
+   * with a given time. */
+  public static Calendar calendar(long millis) {
+    Calendar calendar = calendar();
+    calendar.setTimeInMillis(millis);
+    return calendar;
   }
 
   //~ Inner Classes ----------------------------------------------------------

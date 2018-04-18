@@ -132,7 +132,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
       RelNode rel,
       Convention toConvention,
       boolean allowInfiniteCostConverters) {
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     final ConversionData conversionData = getConversionData(planner);
 
     final Convention fromConvention = rel.getConvention();
@@ -221,8 +221,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
      * conversion rules. Maps {@link DefaultEdge} to a
      * collection of {@link ConverterRule} objects.
      */
-    final Multimap<Pair<Convention, Convention>, ConverterRule>
-    mapArcToConverterRule =
+    final Multimap<Pair<Convention, Convention>, ConverterRule> mapArcToConverterRule =
         HashMultimap.create();
 
     private Graphs.FrozenGraph<Convention, DefaultEdge> pathMap;

@@ -28,12 +28,12 @@ package org.apache.calcite.rel.type;
  *
  * <p>SQL usually disallows a record type. For instance,
  *
- * <blockquote>SELECT address.zip FROM Emp AS e</blockquote>
+ * <blockquote><pre>SELECT address.zip FROM Emp AS e</pre></blockquote>
  *
- * is disallowed because {@code address} "looks like" a table alias. You'd have
- * to write
+ * <p>is disallowed because {@code address} "looks like" a table alias. You'd
+ * have to write
  *
- * <blockquote>SELECT e.address.zip FROM Emp AS e</blockquote>
+ * <blockquote><pre>SELECT e.address.zip FROM Emp AS e</pre></blockquote>
  *
  * <p>But if a table has one or more columns that are record-typed and are
  * labeled {@link #PEEK_FIELDS} or {@link #PEEK_FIELDS_DEFAULT} we suspend that
@@ -78,6 +78,11 @@ public enum StructKind {
    * <p>For example, if {@code address} is labeled {@code PEEK_FIELDS}, you
    * could write {@code zipcode} as shorthand for {@code address.zipcode}. */
   PEEK_FIELDS,
+
+  /** As {@link #PEEK_FIELDS}, but fields are not expanded in "SELECT *".
+   *
+   * <p>Used in Flink, not Phoenix. */
+  PEEK_FIELDS_NO_EXPAND,
 }
 
 // End StructKind.java

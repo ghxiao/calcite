@@ -25,7 +25,6 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Ordering;
 
-import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -35,19 +34,19 @@ import java.util.List;
  * {@link org.apache.calcite.rel.core.Sort}.
  */
 public class SortNode extends AbstractSingleNode<Sort> {
-  public SortNode(Interpreter interpreter, Sort rel) {
-    super(interpreter, rel);
+  public SortNode(Compiler compiler, Sort rel) {
+    super(compiler, rel);
   }
 
   public void run() throws InterruptedException {
     final int offset =
         rel.offset == null
             ? 0
-            : ((BigDecimal) ((RexLiteral) rel.offset).getValue()).intValue();
+            : ((RexLiteral) rel.offset).getValueAs(Integer.class);
     final int fetch =
         rel.fetch == null
             ? -1
-            : ((BigDecimal) ((RexLiteral) rel.fetch).getValue()).intValue();
+            : ((RexLiteral) rel.fetch).getValueAs(Integer.class);
     // In pure limit mode. No sort required.
     Row row;
   loop:
@@ -90,8 +89,8 @@ public class SortNode extends AbstractSingleNode<Sort> {
     }
     return Ordering.compound(
         Iterables.transform(rel.getCollation().getFieldCollations(),
-            new Function<RelFieldCollation, Comparator<? super Row>>() {
-              public Comparator<? super Row> apply(RelFieldCollation input) {
+            new Function<RelFieldCollation, Comparator<Row>>() {
+              public Comparator<Row> apply(RelFieldCollation input) {
                 return comparator(input);
               }
             }));

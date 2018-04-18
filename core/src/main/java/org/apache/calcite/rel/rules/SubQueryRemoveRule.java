@@ -37,6 +37,7 @@ import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.rex.RexSubQuery;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.fun.SqlQuantifyOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql2rel.RelDecorrelator;
 import org.apache.calcite.tools.RelBuilder;
@@ -109,7 +110,9 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
             final RelOptUtil.Logic logic =
                 LogicVisitor.find(RelOptUtil.Logic.TRUE, ImmutableList.of(c),
                     e);
-            final RexNode target = apply(e, filter.getVariablesSet(), logic,
+            final Set<CorrelationId>  variablesSet =
+                RelOptUtil.getVariablesUsed(e.rel);
+            final RexNode target = apply(e, variablesSet, logic,
                 builder, 1, builder.peek().getRowType().getFieldCount());
             final RexShuttle shuttle = new ReplaceSubQueryShuttle(e, target);
             c = c.accept(shuttle);
@@ -145,7 +148,14 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
         }
       };
 
-  private SubQueryRemoveRule(RelOptRuleOperand operand,
+  /**
+   * Creates a SubQueryRemoveRule.
+   *
+   * @param operand     root operand, must not be null
+   * @param description Description, or null to guess description
+   * @param relBuilderFactory Builder for relational expressions
+   */
+  public SubQueryRemoveRule(RelOptRuleOperand operand,
       RelBuilderFactory relBuilderFactory,
       String description) {
     super(operand, relBuilderFactory, description);
@@ -157,16 +167,62 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
     switch (e.getKind()) {
     case SCALAR_QUERY:
       builder.push(e.rel);
-      final RelMetadataQuery mq = RelMetadataQuery.instance();
+      final RelMetadataQuery mq = e.rel.getCluster().getMetadataQuery();
       final Boolean unique = mq.areColumnsUnique(builder.peek(),
           ImmutableBitSet.of());
       if (unique == null || !unique) {
         builder.aggregate(builder.groupKey(),
-            builder.aggregateCall(SqlStdOperatorTable.SINGLE_VALUE, false, null,
-                null, builder.field(0)));
+            builder.aggregateCall(SqlStdOperatorTable.SINGLE_VALUE, false,
+                false, null, null, builder.field(0)));
       }
       builder.join(JoinRelType.LEFT, builder.literal(true), variablesSet);
       return field(builder, inputCount, offset);
+
+    case SOME:
+      // Most general case, where the left and right keys might have nulls, and
+      // caller requires 3-valued logic return.
+      //
+      // select e.deptno, e.deptno < some (select deptno from emp) as v
+      // from emp as e
+      //
+      // becomes
+      //
+      // select e.deptno,
+      //   case
+      //   when q.c = 0 then false // sub-query is empty
+      //   when (e.deptno < q.m) is true then true
+      //   when q.c > q.d then unknown // sub-query has at least one null
+      //   else e.deptno < q.m
+      //   end as v
+      // from emp as e
+      // cross join (
+      //   select max(deptno) as m, count(*) as c, count(deptno) as d
+      //   from emp) as q
+      //
+      final SqlQuantifyOperator op = (SqlQuantifyOperator) e.op;
+      builder.push(e.rel)
+          .aggregate(builder.groupKey(),
+              op.comparisonKind == SqlKind.GREATER_THAN
+                  || op.comparisonKind == SqlKind.GREATER_THAN_OR_EQUAL
+                  ? builder.min("m", builder.field(0))
+                  : builder.max("m", builder.field(0)),
+              builder.count(false, "c"),
+              builder.count(false, "d", builder.field(0)))
+          .as("q")
+          .join(JoinRelType.INNER);
+      return builder.call(SqlStdOperatorTable.CASE,
+          builder.call(SqlStdOperatorTable.EQUALS,
+              builder.field("q", "c"), builder.literal(0)),
+          builder.literal(false),
+          builder.call(SqlStdOperatorTable.IS_TRUE,
+              builder.call(RelOptUtil.op(op.comparisonKind, null),
+                  e.operands.get(0), builder.field("q", "m"))),
+          builder.literal(true),
+          builder.call(SqlStdOperatorTable.GREATER_THAN,
+              builder.field("q", "c"), builder.field("q", "d")),
+          builder.literal(null),
+          builder.call(RelOptUtil.op(op.comparisonKind, null),
+              e.operands.get(0), builder.field("q", "m")));
 
     case IN:
     case EXISTS:
@@ -174,6 +230,7 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
       // caller requires 3-valued logic return.
       //
       // select e.deptno, e.deptno in (select deptno from emp)
+      // from emp as e
       //
       // becomes
       //
@@ -185,7 +242,7 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
       //   when ct.ck < ct.c then null
       //   else false
       //   end
-      // from e
+      // from emp as e
       // left join (
       //   (select count(*) as c, count(deptno) as ck from emp) as ct
       //   cross join (select distinct deptno, true as i from emp)) as dt
@@ -198,7 +255,7 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
       //   when dt.i is not null then true
       //   else false
       //   end
-      // from e
+      // from emp as e
       // left join (select distinct deptno, true as i from emp) as dt
       //   on e.deptno = dt.deptno
       //
@@ -206,7 +263,7 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
       //
       // select e.deptno,
       //   dt.i is not null
-      // from e
+      // from emp as e
       // left join (select distinct deptno, true as i from emp) as dt
       //   on e.deptno = dt.deptno
       //
@@ -218,7 +275,7 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
       //
       // select e.deptno,
       //   true
-      // from e
+      // from emp as e
       // inner join (select distinct deptno from emp) as dt
       //   on e.deptno = dt.deptno
       //
@@ -242,8 +299,8 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
         }
         builder.aggregate(builder.groupKey(),
             builder.count(false, "c"),
-            builder.aggregateCall(SqlStdOperatorTable.COUNT, false, null, "ck",
-                builder.fields()));
+            builder.aggregateCall(SqlStdOperatorTable.COUNT, false, false, null,
+                "ck", builder.fields()));
         builder.as("ct");
         if (!variablesSet.isEmpty()) {
           builder.join(JoinRelType.LEFT, builder.literal(true), variablesSet);
@@ -354,7 +411,7 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
     private final RexSubQuery subQuery;
     private final RexNode replacement;
 
-    public ReplaceSubQueryShuttle(RexSubQuery subQuery, RexNode replacement) {
+    ReplaceSubQueryShuttle(RexSubQuery subQuery, RexNode replacement) {
       this.subQuery = subQuery;
       this.replacement = replacement;
     }

@@ -17,18 +17,35 @@
 package org.apache.calcite.sql;
 
 import org.apache.calcite.avatica.util.DateTimeUtils;
+import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.config.NullCollation;
+import org.apache.calcite.linq4j.function.Experimental;
 import org.apache.calcite.rel.RelFieldCollation;
+import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeSystem;
+import org.apache.calcite.sql.dialect.AnsiSqlDialect;
+import org.apache.calcite.sql.dialect.CalciteSqlDialect;
+import org.apache.calcite.sql.dialect.JethroDataSqlDialect;
+import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.parser.SqlParserPos;
+import org.apache.calcite.sql.type.BasicSqlType;
+import org.apache.calcite.sql.type.SqlTypeUtil;
 
 import com.google.common.base.Preconditions;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.DatabaseMetaData;
-import java.sql.SQLException;
+import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import javax.annotation.Nonnull;
 
 /**
  * <code>SqlDialect</code> encapsulates the differences between dialects of SQL.
@@ -39,22 +56,21 @@ import java.util.regex.Pattern;
 public class SqlDialect {
   //~ Static fields/initializers ---------------------------------------------
 
-  /**
-   * A dialect useful for generating generic SQL. If you need to do something
-   * database-specific like quoting identifiers, don't rely on this dialect to
-   * do what you want.
-   */
-  public static final SqlDialect DUMMY =
-      DatabaseProduct.UNKNOWN.getDialect();
+  protected static final Logger LOGGER =
+      LoggerFactory.getLogger(SqlDialect.class);
 
-  /**
-   * A dialect useful for generating SQL which can be parsed by the
-   * Calcite parser, in particular quoting literals and identifiers. If you
-   * want a dialect that knows the full capabilities of the database, create
-   * one from a connection.
-   */
+  /** Empty context. */
+  public static final Context EMPTY_CONTEXT = emptyContext();
+
+  /** @deprecated Use {@link AnsiSqlDialect#DEFAULT} instead. */
+  @Deprecated // to be removed before 2.0
+  public static final SqlDialect DUMMY =
+      AnsiSqlDialect.DEFAULT;
+
+  /** @deprecated Use {@link CalciteSqlDialect#DEFAULT} instead. */
+  @Deprecated // to be removed before 2.0
   public static final SqlDialect CALCITE =
-      DatabaseProduct.CALCITE.getDialect();
+      CalciteSqlDialect.DEFAULT;
 
   //~ Instance fields --------------------------------------------------------
 
@@ -62,7 +78,7 @@ public class SqlDialect {
   private final String identifierEndQuoteString;
   private final String identifierEscapedQuote;
   private final DatabaseProduct databaseProduct;
-  private final NullCollation nullCollation;
+  protected final NullCollation nullCollation;
 
   //~ Constructors -----------------------------------------------------------
 
@@ -73,66 +89,22 @@ public class SqlDialect {
    * importantly, to its {@link java.sql.Connection} -- after this call has
    * returned.
    *
-   * @param databaseMetaData used to determine which dialect of SQL to
-   *                         generate
-   */
-  public static SqlDialect create(DatabaseMetaData databaseMetaData) {
-    String identifierQuoteString;
-    try {
-      identifierQuoteString = databaseMetaData.getIdentifierQuoteString();
-    } catch (SQLException e) {
-      throw FakeUtil.newInternal(e, "while quoting identifier");
-    }
-    String databaseProductName;
-    try {
-      databaseProductName = databaseMetaData.getDatabaseProductName();
-    } catch (SQLException e) {
-      throw FakeUtil.newInternal(e, "while detecting database product");
-    }
-    String databaseProductVersion;
-    try {
-      databaseProductVersion = databaseMetaData.getDatabaseProductVersion();
-    } catch (SQLException e) {
-      throw FakeUtil.newInternal(e, "while detecting database version");
-    }
-    final DatabaseProduct databaseProduct =
-        getProduct(databaseProductName, databaseProductVersion);
-    NullCollation nullCollation;
-    try {
-      if (databaseMetaData.nullsAreSortedAtEnd()) {
-        nullCollation = NullCollation.LAST;
-      } else if (databaseMetaData.nullsAreSortedAtStart()) {
-        nullCollation = NullCollation.FIRST;
-      } else if (databaseMetaData.nullsAreSortedLow()) {
-        nullCollation = NullCollation.LOW;
-      } else if (databaseMetaData.nullsAreSortedHigh()) {
-        nullCollation = NullCollation.HIGH;
-      } else {
-        throw new IllegalArgumentException("cannot deduce null collation");
-      }
-    } catch (SQLException e) {
-      throw new IllegalArgumentException("cannot deduce null collation", e);
-    }
-    return new SqlDialect(databaseProduct, databaseProductName,
-        identifierQuoteString, nullCollation);
-  }
-
-  /**
-   * Creates a SqlDialect.
+   * @param databaseMetaData used to determine which dialect of SQL to generate
    *
-   * @param databaseProduct       Database product; may be UNKNOWN, never null
-   * @param databaseProductName   Database product name from JDBC driver
-   * @param identifierQuoteString String to quote identifiers. Null if quoting
-   *                              is not supported. If "[", close quote is
-   *                              deemed to be "]".
+   * @deprecated Replaced by {@link SqlDialectFactory}
    */
   @Deprecated // to be removed before 2.0
-  public SqlDialect(
-      DatabaseProduct databaseProduct,
-      String databaseProductName,
+  public static SqlDialect create(DatabaseMetaData databaseMetaData) {
+    return new SqlDialectFactoryImpl().create(databaseMetaData);
+  }
+
+  @Deprecated // to be removed before 2.0
+  public SqlDialect(DatabaseProduct databaseProduct, String databaseProductName,
       String identifierQuoteString) {
-    this(databaseProduct, databaseProductName, identifierQuoteString,
-        NullCollation.HIGH);
+    this(EMPTY_CONTEXT
+        .withDatabaseProduct(databaseProduct)
+        .withDatabaseProductName(databaseProductName)
+        .withIdentifierQuoteString(identifierQuoteString));
   }
 
   /**
@@ -144,14 +116,29 @@ public class SqlDialect {
    *                              is not supported. If "[", close quote is
    *                              deemed to be "]".
    * @param nullCollation         Whether NULL values appear first or last
+   *
+   * @deprecated Use {@link #SqlDialect(Context)}
    */
-  public SqlDialect(
-      DatabaseProduct databaseProduct,
-      String databaseProductName,
+  @Deprecated // to be removed before 2.0
+  public SqlDialect(DatabaseProduct databaseProduct, String databaseProductName,
       String identifierQuoteString, NullCollation nullCollation) {
-    Preconditions.checkNotNull(this.nullCollation = nullCollation);
-    Preconditions.checkNotNull(databaseProductName);
-    this.databaseProduct = Preconditions.checkNotNull(databaseProduct);
+    this(EMPTY_CONTEXT
+        .withDatabaseProduct(databaseProduct)
+        .withDatabaseProductName(databaseProductName)
+        .withIdentifierQuoteString(identifierQuoteString)
+        .withNullCollation(nullCollation));
+  }
+
+  /**
+   * Creates a SqlDialect.
+   *
+   * @param context All the information necessary to create a dialect
+   */
+  public SqlDialect(Context context) {
+    this.nullCollation = Preconditions.checkNotNull(context.nullCollation());
+    this.databaseProduct =
+        Preconditions.checkNotNull(context.databaseProduct());
+    String identifierQuoteString = context.identifierQuoteString();
     if (identifierQuoteString != null) {
       identifierQuoteString = identifierQuoteString.trim();
       if (identifierQuoteString.equals("")) {
@@ -160,18 +147,21 @@ public class SqlDialect {
     }
     this.identifierQuoteString = identifierQuoteString;
     this.identifierEndQuoteString =
-        identifierQuoteString == null
-            ? null
-            : identifierQuoteString.equals("[")
-                ? "]"
-                : identifierQuoteString;
+        identifierQuoteString == null ? null
+            : identifierQuoteString.equals("[") ? "]"
+            : identifierQuoteString;
     this.identifierEscapedQuote =
-        identifierQuoteString == null
-            ? null
+        identifierQuoteString == null ? null
             : this.identifierEndQuoteString + this.identifierEndQuoteString;
   }
 
   //~ Methods ----------------------------------------------------------------
+
+  /** Creates an empty context. Use {@link #EMPTY_CONTEXT} if possible. */
+  protected static Context emptyContext() {
+    return new ContextImpl(DatabaseProduct.UNKNOWN, null, null, -1, -1, null,
+        NullCollation.HIGH, JethroDataSqlDialect.JethroInfo.EMPTY);
+  }
 
   /**
    * Converts a product name and version (per the JDBC driver) into a product
@@ -181,6 +171,7 @@ public class SqlDialect {
    * @param productVersion Product version
    * @return database product
    */
+  @Deprecated // to be removed before 2.0
   public static DatabaseProduct getProduct(
       String productName,
       String productVersion) {
@@ -239,12 +230,12 @@ public class SqlDialect {
       return DatabaseProduct.H2;
     } else if (upperProductName.contains("VERTICA")) {
       return DatabaseProduct.VERTICA;
+    } else if (upperProductName.contains("GOOGLE BIGQUERY")) {
+      return DatabaseProduct.BIG_QUERY;
     } else {
       return DatabaseProduct.UNKNOWN;
     }
   }
-
-  // -- detect various databases --
 
   /**
    * Encloses an identifier in quotation marks appropriate for the current SQL
@@ -339,6 +330,93 @@ public class SqlDialect {
     }
   }
 
+  public void unparseCall(SqlWriter writer, SqlCall call, int leftPrec,
+      int rightPrec) {
+    call.getOperator().unparse(writer, call, leftPrec, rightPrec);
+  }
+
+  public void unparseDateTimeLiteral(SqlWriter writer,
+      SqlAbstractDateTimeLiteral literal, int leftPrec, int rightPrec) {
+    writer.literal(literal.toString());
+  }
+
+  public void unparseSqlDatetimeArithmetic(SqlWriter writer,
+      SqlCall call, SqlKind sqlKind, int leftPrec, int rightPrec) {
+    final SqlWriter.Frame frame = writer.startList("(", ")");
+    call.operand(0).unparse(writer, leftPrec, rightPrec);
+    writer.sep((SqlKind.PLUS == sqlKind) ? "+" : "-");
+    call.operand(1).unparse(writer, leftPrec, rightPrec);
+    writer.endList(frame);
+    //Only two parameters are present normally
+    //Checking parameter count to prevent errors
+    if (call.getOperandList().size() > 2) {
+      call.operand(2).unparse(writer, leftPrec, rightPrec);
+    }
+  }
+
+  /** Converts an interval qualifier to a SQL string. The default implementation
+   * returns strings such as
+   * <code>INTERVAL '1 2:3:4' DAY(4) TO SECOND(4)</code>. */
+  public void unparseSqlIntervalQualifier(SqlWriter writer,
+      SqlIntervalQualifier qualifier, RelDataTypeSystem typeSystem) {
+    final String start = qualifier.timeUnitRange.startUnit.name();
+    final int fractionalSecondPrecision =
+        qualifier.getFractionalSecondPrecision(typeSystem);
+    final int startPrecision = qualifier.getStartPrecision(typeSystem);
+    if (qualifier.timeUnitRange.startUnit == TimeUnit.SECOND) {
+      if (!qualifier.useDefaultFractionalSecondPrecision()) {
+        final SqlWriter.Frame frame = writer.startFunCall(start);
+        writer.print(startPrecision);
+        writer.sep(",", true);
+        writer.print(qualifier.getFractionalSecondPrecision(typeSystem));
+        writer.endList(frame);
+      } else if (!qualifier.useDefaultStartPrecision()) {
+        final SqlWriter.Frame frame = writer.startFunCall(start);
+        writer.print(startPrecision);
+        writer.endList(frame);
+      } else {
+        writer.keyword(start);
+      }
+    } else {
+      if (!qualifier.useDefaultStartPrecision()) {
+        final SqlWriter.Frame frame = writer.startFunCall(start);
+        writer.print(startPrecision);
+        writer.endList(frame);
+      } else {
+        writer.keyword(start);
+      }
+
+      if (null != qualifier.timeUnitRange.endUnit) {
+        writer.keyword("TO");
+        final String end = qualifier.timeUnitRange.endUnit.name();
+        if ((TimeUnit.SECOND == qualifier.timeUnitRange.endUnit)
+                && (!qualifier.useDefaultFractionalSecondPrecision())) {
+          final SqlWriter.Frame frame = writer.startFunCall(end);
+          writer.print(fractionalSecondPrecision);
+          writer.endList(frame);
+        } else {
+          writer.keyword(end);
+        }
+      }
+    }
+  }
+
+  /** Converts an interval literal to a SQL string. The default implementation
+   * returns strings such as
+   * <code>INTERVAL '1 2:3:4' DAY(4) TO SECOND(4)</code>. */
+  public void unparseSqlIntervalLiteral(SqlWriter writer,
+      SqlIntervalLiteral literal, int leftPrec, int rightPrec) {
+    SqlIntervalLiteral.IntervalValue interval =
+        (SqlIntervalLiteral.IntervalValue) literal.getValue();
+    writer.keyword("INTERVAL");
+    if (interval.getSign() == -1) {
+      writer.print("-");
+    }
+    writer.literal("'" + literal.getValue().toString() + "'");
+    unparseSqlIntervalQualifier(writer, interval.getIntervalQualifier(),
+        RelDataTypeSystem.DEFAULT);
+  }
+
   /**
    * Returns whether the string contains any characters outside the
    * comfortable 7-bit ASCII range (32 through 127).
@@ -381,8 +459,8 @@ public class SqlDialect {
   }
 
   private static final char[] HEXITS = {
-    '0', '1', '2', '3', '4', '5', '6', '7',
-    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+      '0', '1', '2', '3', '4', '5', '6', '7',
+      '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
   };
 
   /**
@@ -405,18 +483,12 @@ public class SqlDialect {
   }
 
   protected boolean allowsAs() {
-    switch (databaseProduct) {
-    case ORACLE:
-    case HIVE:
-      return false;
-    default:
-      return true;
-    }
+    return true;
   }
 
   // -- behaviors --
   protected boolean requiresAliasForFromItems() {
-    return getDatabaseProduct() == DatabaseProduct.POSTGRESQL;
+    return false;
   }
 
   /** Returns whether a qualified table in the FROM clause has an implicit alias
@@ -442,12 +514,7 @@ public class SqlDialect {
    * <p>Returns true for all databases except DB2.
    */
   public boolean hasImplicitTableAlias() {
-    switch (databaseProduct) {
-    case DB2:
-      return false;
-    default:
-      return true;
-    }
+    return true;
   }
 
   /**
@@ -463,7 +530,7 @@ public class SqlDialect {
    * <blockquote><code>quoteTimestampLiteral(new Timestamp(0));</code>
    * </blockquote>
    *
-   * returns {@code TIMESTAMP '1970-01-01 00:00:00'}, regardless of the JVM's
+   * <p>returns {@code TIMESTAMP '1970-01-01 00:00:00'}, regardless of the JVM's
    * time zone.
    *
    * @param timestamp Timestamp
@@ -474,7 +541,7 @@ public class SqlDialect {
         new SimpleDateFormat(
             "'TIMESTAMP' ''yyyy-MM-DD HH:mm:SS''",
             Locale.ROOT);
-    format.setTimeZone(DateTimeUtils.GMT_ZONE);
+    format.setTimeZone(DateTimeUtils.UTC_ZONE);
     return format.format(timestamp);
   }
 
@@ -482,8 +549,15 @@ public class SqlDialect {
    * Returns the database this dialect belongs to,
    * {@link SqlDialect.DatabaseProduct#UNKNOWN} if not known, never null.
    *
+   * <p>Please be judicious in how you use this method. If you wish to determine
+   * whether a dialect has a particular capability or behavior, it is usually
+   * better to add a method to SqlDialect and override that method in particular
+   * sub-classes of SqlDialect.
+   *
    * @return Database product
+   * @deprecated To be removed without replacement
    */
+  @Deprecated // to be removed before 2.0
   public DatabaseProduct getDatabaseProduct() {
     return databaseProduct;
   }
@@ -493,18 +567,89 @@ public class SqlDialect {
    * data type, for instance {@code VARCHAR(30) CHARACTER SET `ISO-8859-1`}.
    */
   public boolean supportsCharSet() {
-    switch (databaseProduct) {
-    case DB2:
-    case H2:
-    case HSQLDB:
-    case MYSQL:
-    case ORACLE:
-    case PHOENIX:
-    case POSTGRESQL:
-      return false;
-    default:
+    return true;
+  }
+
+  public boolean supportsAggregateFunction(SqlKind kind) {
+    switch (kind) {
+    case COUNT:
+    case SUM:
+    case SUM0:
+    case MIN:
+    case MAX:
       return true;
     }
+    return false;
+  }
+
+  /** Returns whether this dialect supports window functions (OVER clause). */
+  public boolean supportsWindowFunctions() {
+    return true;
+  }
+
+  /** Returns whether this dialect supports a given function or operator. */
+  public boolean supportsFunction(SqlOperator operator, RelDataType type,
+      List<RelDataType> paramTypes) {
+    return true;
+  }
+
+  public CalendarPolicy getCalendarPolicy() {
+    return CalendarPolicy.NULL;
+  }
+
+  public SqlNode getCastSpec(RelDataType type) {
+    if (type instanceof BasicSqlType) {
+      return new SqlDataTypeSpec(
+          new SqlIdentifier(type.getSqlTypeName().name(), SqlParserPos.ZERO),
+              type.getPrecision(),
+              type.getScale(),
+              type.getCharset() != null
+                  && supportsCharSet()
+                  ? type.getCharset().name()
+                  : null,
+              null,
+              SqlParserPos.ZERO);
+    }
+    return SqlTypeUtil.convertTypeToSpec(type);
+  }
+
+  /** Rewrite SINGLE_VALUE into expression based on database variants
+   *  E.g. HSQLDB, MYSQL, ORACLE, etc
+   */
+  public SqlNode rewriteSingleValueExpr(SqlNode aggCall) {
+    LOGGER.debug("SINGLE_VALUE rewrite not supported for {}", databaseProduct);
+    return aggCall;
+  }
+
+  /**
+   * Returns the SqlNode for emulating the null direction for the given field
+   * or <code>null</code> if no emulation needs to be done.
+   *
+   * @param node The SqlNode representing the expression
+   * @param nullsFirst Whether nulls should come first
+   * @param desc Whether the sort direction is
+   * {@link org.apache.calcite.rel.RelFieldCollation.Direction#DESCENDING} or
+   * {@link org.apache.calcite.rel.RelFieldCollation.Direction#STRICTLY_DESCENDING}
+   * @return A SqlNode for null direction emulation or <code>null</code> if not required
+   */
+  public SqlNode emulateNullDirection(SqlNode node, boolean nullsFirst,
+      boolean desc) {
+    return null;
+  }
+
+  protected SqlNode emulateNullDirectionWithIsNull(SqlNode node,
+      boolean nullsFirst, boolean desc) {
+    // No need for emulation if the nulls will anyways come out the way we want
+    // them based on "nullsFirst" and "desc".
+    if (nullCollation.isDefaultOrder(nullsFirst, desc)) {
+      return null;
+    }
+
+    node = SqlStdOperatorTable.IS_NULL.createCall(SqlParserPos.ZERO, node);
+    if (nullsFirst) {
+      node = SqlStdOperatorTable.DESC.createCall(SqlParserPos.ZERO, node);
+    }
+    return node;
   }
 
   /**
@@ -513,16 +658,94 @@ public class SqlDialect {
    * {@code OFFSET 10 ROWS FETCH NEXT 20 ROWS ONLY}.
    * If false, we assume that the dialect supports the alternative syntax
    * {@code LIMIT 20 OFFSET 10}.
+   *
+   * @deprecated This method is no longer used. To change how the dialect
+   * unparses offset/fetch, override the {@link #unparseOffsetFetch} method.
    */
+  @Deprecated
   public boolean supportsOffsetFetch() {
-    switch (databaseProduct) {
-    case MYSQL:
-    case HIVE:
-    case REDSHIFT:
-      return false;
-    default:
-      return true;
+    return true;
+  }
+
+  /**
+   * Converts an offset and fetch into SQL.
+   *
+   * <p>At least one of {@code offset} and {@code fetch} must be provided.
+   *
+   * <p>Common options:
+   * <ul>
+   *   <li>{@code OFFSET offset ROWS FETCH NEXT fetch ROWS ONLY}
+   *   (ANSI standard SQL, Oracle, PostgreSQL, and the default)
+   *   <li>{@code LIMIT fetch OFFSET offset} (Apache Hive, MySQL, Redshift)
+   * </ul>
+   *
+   * @param writer Writer
+   * @param offset Number of rows to skip before emitting, or null
+   * @param fetch Number of rows to fetch, or null
+   *
+   * @see #unparseFetchUsingAnsi(SqlWriter, SqlNode, SqlNode)
+   * @see #unparseFetchUsingLimit(SqlWriter, SqlNode, SqlNode)
+   */
+  public void unparseOffsetFetch(SqlWriter writer, SqlNode offset,
+      SqlNode fetch) {
+    unparseFetchUsingAnsi(writer, offset, fetch);
+  }
+
+  /** Unparses offset/fetch using ANSI standard "OFFSET offset ROWS FETCH NEXT
+   * fetch ROWS ONLY" syntax. */
+  protected final void unparseFetchUsingAnsi(SqlWriter writer, SqlNode offset,
+      SqlNode fetch) {
+    Preconditions.checkArgument(fetch != null || offset != null);
+    if (offset != null) {
+      writer.newlineAndIndent();
+      final SqlWriter.Frame offsetFrame =
+          writer.startList(SqlWriter.FrameTypeEnum.OFFSET);
+      writer.keyword("OFFSET");
+      offset.unparse(writer, -1, -1);
+      writer.keyword("ROWS");
+      writer.endList(offsetFrame);
     }
+    if (fetch != null) {
+      writer.newlineAndIndent();
+      final SqlWriter.Frame fetchFrame =
+          writer.startList(SqlWriter.FrameTypeEnum.FETCH);
+      writer.keyword("FETCH");
+      writer.keyword("NEXT");
+      fetch.unparse(writer, -1, -1);
+      writer.keyword("ROWS");
+      writer.keyword("ONLY");
+      writer.endList(fetchFrame);
+    }
+  }
+
+  /** Unparses offset/fetch using "LIMIT fetch OFFSET offset" syntax. */
+  protected final void unparseFetchUsingLimit(SqlWriter writer, SqlNode offset,
+      SqlNode fetch) {
+    Preconditions.checkArgument(fetch != null || offset != null);
+    if (fetch != null) {
+      writer.newlineAndIndent();
+      final SqlWriter.Frame fetchFrame =
+          writer.startList(SqlWriter.FrameTypeEnum.FETCH);
+      writer.keyword("LIMIT");
+      fetch.unparse(writer, -1, -1);
+      writer.endList(fetchFrame);
+    }
+    if (offset != null) {
+      writer.newlineAndIndent();
+      final SqlWriter.Frame offsetFrame =
+          writer.startList(SqlWriter.FrameTypeEnum.OFFSET);
+      writer.keyword("OFFSET");
+      offset.unparse(writer, -1, -1);
+      writer.endList(offsetFrame);
+    }
+  }
+
+  /**
+   * Returns whether the dialect supports nested aggregations, for instance
+   * {@code SELECT SUM(SUM(1)) }.
+   */
+  public boolean supportsNestedAggregations() {
+    return true;
   }
 
   /** Returns how NULL values are sorted if an ORDER BY item does not contain
@@ -549,6 +772,18 @@ public class SqlDialect {
     default:
       return RelFieldCollation.NullDirection.UNSPECIFIED;
     }
+  }
+
+  /**
+   * Returns whether the dialect supports VALUES in a sub-query with
+   * and an "AS t(column, ...)" values to define column names.
+   *
+   * <p>Currently, only Oracle does not. For this, we generate "SELECT v0 AS c0,
+   * v1 AS c1 ... UNION ALL ...". We may need to refactor this method when we
+   * support VALUES for other dialects. */
+  @Experimental
+  public boolean supportsAliasedValues() {
+    return true;
   }
 
   /**
@@ -597,6 +832,17 @@ public class SqlDialect {
     }
   }
 
+
+  /** Whether this JDBC driver needs you to pass a Calendar object to methods
+   * such as {@link ResultSet#getTimestamp(int, java.util.Calendar)}. */
+  public enum CalendarPolicy {
+    NONE,
+    NULL,
+    LOCAL,
+    DIRECT,
+    SHIFT;
+  }
+
   /**
    * Rough list of flavors of database.
    *
@@ -611,17 +857,19 @@ public class SqlDialect {
    */
   public enum DatabaseProduct {
     ACCESS("Access", "\"", NullCollation.HIGH),
+    BIG_QUERY("Google BigQuery", "`", NullCollation.LOW),
     CALCITE("Apache Calcite", "\"", NullCollation.HIGH),
     MSSQL("Microsoft SQL Server", "[", NullCollation.HIGH),
-    MYSQL("MySQL", "`", NullCollation.HIGH),
+    MYSQL("MySQL", "`", NullCollation.LOW),
     ORACLE("Oracle", "\"", NullCollation.HIGH),
     DERBY("Apache Derby", null, NullCollation.HIGH),
     DB2("IBM DB2", null, NullCollation.HIGH),
     FIREBIRD("Firebird", null, NullCollation.HIGH),
     H2("H2", "\"", NullCollation.HIGH),
-    HIVE("Apache Hive", null, NullCollation.HIGH),
+    HIVE("Apache Hive", null, NullCollation.LOW),
     INFORMIX("Informix", null, NullCollation.HIGH),
     INGRES("Ingres", null, NullCollation.HIGH),
+    JETHRO("JethroData", "\"", NullCollation.LOW),
     LUCIDDB("LucidDB", "\"", NullCollation.HIGH),
     INTERBASE("Interbase", null, NullCollation.HIGH),
     PHOENIX("Phoenix", "\"", NullCollation.HIGH),
@@ -649,16 +897,32 @@ public class SqlDialect {
      */
     UNKNOWN("Unknown", "`", NullCollation.HIGH);
 
-    private SqlDialect dialect = null;
+    private final Supplier<SqlDialect> dialect =
+        Suppliers.memoize(new Supplier<SqlDialect>() {
+          public SqlDialect get() {
+            final SqlDialect dialect =
+                SqlDialectFactoryImpl.simple(DatabaseProduct.this);
+            if (dialect != null) {
+              return dialect;
+            }
+            return new SqlDialect(SqlDialect.EMPTY_CONTEXT
+                .withDatabaseProduct(DatabaseProduct.this)
+                .withDatabaseProductName(databaseProductName)
+                .withIdentifierQuoteString(quoteString)
+                .withNullCollation(nullCollation));
+          }
+        });
+
     private String databaseProductName;
     private String quoteString;
     private final NullCollation nullCollation;
 
     DatabaseProduct(String databaseProductName, String quoteString,
         NullCollation nullCollation) {
-      this.databaseProductName = databaseProductName;
+      this.databaseProductName =
+          Preconditions.checkNotNull(databaseProductName);
       this.quoteString = quoteString;
-      this.nullCollation = nullCollation;
+      this.nullCollation = Preconditions.checkNotNull(nullCollation);
     }
 
     /**
@@ -667,18 +931,144 @@ public class SqlDialect {
      * <p>Since databases have many versions and flavors, this dummy dialect
      * is at best an approximation. If you want exact information, better to
      * use a dialect created from an actual connection's metadata
-     * (see {@link SqlDialect#create(java.sql.DatabaseMetaData)}).
+     * (see {@link SqlDialectFactory#create(java.sql.DatabaseMetaData)}).
      *
-     * @return Dialect representing lowest-common-demoninator behavior for
+     * @return Dialect representing lowest-common-denominator behavior for
      * all versions of this database
      */
     public SqlDialect getDialect() {
-      if (dialect == null) {
-        dialect =
-            new SqlDialect(this, databaseProductName, quoteString,
-                nullCollation);
-      }
-      return dialect;
+      return dialect.get();
+    }
+  }
+
+  /** Information for creating a dialect.
+   *
+   * <p>It is immutable; to "set" a property, call one of the "with" methods,
+   * which returns a new context with the desired property value. */
+  public interface Context {
+    @Nonnull DatabaseProduct databaseProduct();
+    Context withDatabaseProduct(@Nonnull DatabaseProduct databaseProduct);
+    String databaseProductName();
+    Context withDatabaseProductName(String databaseProductName);
+    String databaseVersion();
+    Context withDatabaseVersion(String databaseVersion);
+    int databaseMajorVersion();
+    Context withDatabaseMajorVersion(int databaseMajorVersion);
+    int databaseMinorVersion();
+    Context withDatabaseMinorVersion(int databaseMinorVersion);
+    String identifierQuoteString();
+    Context withIdentifierQuoteString(String identifierQuoteString);
+    @Nonnull NullCollation nullCollation();
+    Context withNullCollation(@Nonnull NullCollation nullCollation);
+    JethroDataSqlDialect.JethroInfo jethroInfo();
+    Context withJethroInfo(JethroDataSqlDialect.JethroInfo jethroInfo);
+  }
+
+  /** Implementation of Context. */
+  private static class ContextImpl implements Context {
+    private final DatabaseProduct databaseProduct;
+    private final String databaseProductName;
+    private final String databaseVersion;
+    private final int databaseMajorVersion;
+    private final int databaseMinorVersion;
+    private final String identifierQuoteString;
+    private final NullCollation nullCollation;
+    private final JethroDataSqlDialect.JethroInfo jethroInfo;
+
+    private ContextImpl(DatabaseProduct databaseProduct,
+        String databaseProductName, String databaseVersion,
+        int databaseMajorVersion, int databaseMinorVersion,
+        String identifierQuoteString, NullCollation nullCollation,
+        JethroDataSqlDialect.JethroInfo jethroInfo) {
+      this.databaseProduct = Preconditions.checkNotNull(databaseProduct);
+      this.databaseProductName = databaseProductName;
+      this.databaseVersion = databaseVersion;
+      this.databaseMajorVersion = databaseMajorVersion;
+      this.databaseMinorVersion = databaseMinorVersion;
+      this.identifierQuoteString = identifierQuoteString;
+      this.nullCollation = Preconditions.checkNotNull(nullCollation);
+      this.jethroInfo = Preconditions.checkNotNull(jethroInfo);
+    }
+
+    @Nonnull public DatabaseProduct databaseProduct() {
+      return databaseProduct;
+    }
+
+    public Context withDatabaseProduct(
+        @Nonnull DatabaseProduct databaseProduct) {
+      return new ContextImpl(databaseProduct, databaseProductName,
+          databaseVersion, databaseMajorVersion, databaseMinorVersion,
+          identifierQuoteString, nullCollation, jethroInfo);
+    }
+
+    public String databaseProductName() {
+      return databaseProductName;
+    }
+
+    public Context withDatabaseProductName(String databaseProductName) {
+      return new ContextImpl(databaseProduct, databaseProductName,
+          databaseVersion, databaseMajorVersion, databaseMinorVersion,
+          identifierQuoteString, nullCollation, jethroInfo);
+    }
+
+    public String databaseVersion() {
+      return databaseVersion;
+    }
+
+    public Context withDatabaseVersion(String databaseVersion) {
+      return new ContextImpl(databaseProduct, databaseProductName,
+          databaseVersion, databaseMajorVersion, databaseMinorVersion,
+          identifierQuoteString, nullCollation, jethroInfo);
+    }
+
+    public int databaseMajorVersion() {
+      return databaseMajorVersion;
+    }
+
+    public Context withDatabaseMajorVersion(int databaseMajorVersion) {
+      return new ContextImpl(databaseProduct, databaseProductName,
+          databaseVersion, databaseMajorVersion, databaseMinorVersion,
+          identifierQuoteString, nullCollation, jethroInfo);
+    }
+
+    public int databaseMinorVersion() {
+      return databaseMinorVersion;
+    }
+
+    public Context withDatabaseMinorVersion(int databaseMinorVersion) {
+      return new ContextImpl(databaseProduct, databaseProductName,
+          databaseVersion, databaseMajorVersion, databaseMinorVersion,
+          identifierQuoteString, nullCollation, jethroInfo);
+    }
+
+    public String identifierQuoteString() {
+      return identifierQuoteString;
+    }
+
+    public Context withIdentifierQuoteString(String identifierQuoteString) {
+      return new ContextImpl(databaseProduct, databaseProductName,
+          databaseVersion, databaseMajorVersion, databaseMinorVersion,
+          identifierQuoteString, nullCollation, jethroInfo);
+    }
+
+    @Nonnull public NullCollation nullCollation() {
+      return nullCollation;
+    }
+
+    public Context withNullCollation(@Nonnull NullCollation nullCollation) {
+      return new ContextImpl(databaseProduct, databaseProductName,
+          databaseVersion, databaseMajorVersion, databaseMinorVersion,
+          identifierQuoteString, nullCollation, jethroInfo);
+    }
+
+    @Nonnull public JethroDataSqlDialect.JethroInfo jethroInfo() {
+      return jethroInfo;
+    }
+
+    public Context withJethroInfo(JethroDataSqlDialect.JethroInfo jethroInfo) {
+      return new ContextImpl(databaseProduct, databaseProductName,
+          databaseVersion, databaseMajorVersion, databaseMinorVersion,
+          identifierQuoteString, nullCollation, jethroInfo);
     }
   }
 }

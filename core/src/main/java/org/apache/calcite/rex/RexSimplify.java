@@ -16,7 +16,10 @@
  */
 package org.apache.calcite.rex;
 
+import org.apache.calcite.avatica.util.TimeUnit;
+import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.linq4j.Ord;
+import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.Strong;
 import org.apache.calcite.rel.core.Project;
@@ -29,9 +32,11 @@ import org.apache.calcite.util.Util;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.BoundType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Range;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -48,6 +53,7 @@ import java.util.Set;
  */
 public class RexSimplify {
   public final RexBuilder rexBuilder;
+  private final RelOptPredicateList predicates;
   final boolean unknownAsFalse;
   private final RexExecutor executor;
 
@@ -55,14 +61,22 @@ public class RexSimplify {
    * Creates a RexSimplify.
    *
    * @param rexBuilder Rex builder
+   * @param predicates Predicates known to hold on input fields
    * @param unknownAsFalse Whether to convert UNKNOWN values to FALSE
    * @param executor Executor for constant reduction, not null
    */
-  public RexSimplify(RexBuilder rexBuilder, boolean unknownAsFalse,
-      RexExecutor executor) {
+  public RexSimplify(RexBuilder rexBuilder, RelOptPredicateList predicates,
+      boolean unknownAsFalse, RexExecutor executor) {
     this.rexBuilder = Preconditions.checkNotNull(rexBuilder);
+    this.predicates = Preconditions.checkNotNull(predicates);
     this.unknownAsFalse = unknownAsFalse;
     this.executor = Preconditions.checkNotNull(executor);
+  }
+
+  @Deprecated // to be removed before 2.0
+  public RexSimplify(RexBuilder rexBuilder, boolean unknownAsFalse,
+      RexExecutor executor) {
+    this(rexBuilder, RelOptPredicateList.EMPTY, unknownAsFalse, executor);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -72,7 +86,15 @@ public class RexSimplify {
   public RexSimplify withUnknownAsFalse(boolean unknownAsFalse) {
     return unknownAsFalse == this.unknownAsFalse
         ? this
-        : new RexSimplify(rexBuilder, unknownAsFalse, executor);
+        : new RexSimplify(rexBuilder, predicates, unknownAsFalse, executor);
+  }
+
+  /** Returns a RexSimplify the same as this but with a specified
+   * {@link #predicates} value. */
+  public RexSimplify withPredicates(RelOptPredicateList predicates) {
+    return predicates == this.predicates
+        ? this
+        : new RexSimplify(rexBuilder, predicates, unknownAsFalse, executor);
   }
 
   /** Simplifies a boolean expression, always preserving its type and its
@@ -122,6 +144,9 @@ public class RexSimplify {
       return simplifyCase((RexCall) e);
     case CAST:
       return simplifyCast((RexCall) e);
+    case CEIL:
+    case FLOOR:
+      return simplifyCeilFloor((RexCall) e);
     case IS_NULL:
     case IS_NOT_NULL:
     case IS_TRUE:
@@ -144,6 +169,13 @@ public class RexSimplify {
 
   // e must be a comparison (=, >, >=, <, <=, !=)
   private RexNode simplifyComparison(RexCall e) {
+    //noinspection unchecked
+    return simplifyComparison(e, Comparable.class);
+  }
+
+  // e must be a comparison (=, >, >=, <, <=, !=)
+  private <C extends Comparable<C>> RexNode simplifyComparison(RexCall e,
+      Class<C> clazz) {
     final List<RexNode> operands = new ArrayList<>(e.operands);
     simplifyList(operands);
 
@@ -175,14 +207,13 @@ public class RexSimplify {
     if (o0.isA(SqlKind.LITERAL)
         && o1.isA(SqlKind.LITERAL)
         && o0.getType().equals(o1.getType())) {
-      final Comparable v0 = ((RexLiteral) o0).getValue();
-      final Comparable v1 = ((RexLiteral) o1).getValue();
+      final C v0 = ((RexLiteral) o0).getValueAs(clazz);
+      final C v1 = ((RexLiteral) o1).getValueAs(clazz);
       if (v0 == null || v1 == null) {
         return unknownAsFalse
             ? rexBuilder.makeLiteral(false)
             : rexBuilder.makeNullLiteral(e.getType());
       }
-      @SuppressWarnings("unchecked")
       final int comparisonResult = v0.compareTo(v1);
       switch (e.getKind()) {
       case EQUALS:
@@ -203,10 +234,13 @@ public class RexSimplify {
     }
 
     // If none of the arguments were simplified, return the call unchanged.
+    final RexNode e2;
     if (operands.equals(e.operands)) {
-      return e;
+      e2 = e;
+    } else {
+      e2 = rexBuilder.makeCall(e.op, operands);
     }
-    return rexBuilder.makeCall(e.op, operands);
+    return simplifyUsingPredicates(e2, clazz);
   }
 
   /**
@@ -323,7 +357,7 @@ public class RexSimplify {
       // Note that
       //   (NOT x) IS TRUE !=> x IS FALSE
       // because of null values.
-      final SqlOperator notKind = RexUtil.op(kind.negate());
+      final SqlOperator notKind = RexUtil.op(kind.negateNullSafe());
       final RexNode arg = ((RexCall) a).operands.get(0);
       return simplify(rexBuilder.makeCall(notKind, arg));
     }
@@ -356,7 +390,7 @@ public class RexSimplify {
     case CUSTOM:
       switch (a.getKind()) {
       case LITERAL:
-        return rexBuilder.makeLiteral(((RexLiteral) a).getValue() != null);
+        return rexBuilder.makeLiteral(!((RexLiteral) a).isNull());
       default:
         throw new AssertionError("every CUSTOM policy needs a handler, "
             + a.getKind());
@@ -520,10 +554,6 @@ public class RexSimplify {
     if (terms.isEmpty() && notTerms.isEmpty()) {
       return rexBuilder.makeLiteral(true);
     }
-    if (terms.size() == 1 && notTerms.isEmpty()) {
-      // Make sure "x OR y OR x" (a single-term conjunction) gets simplified.
-      return simplify(terms.get(0));
-    }
     // If one of the not-disjunctions is a disjunction that is wholly
     // contained in the disjunctions list, the expression is not
     // satisfiable.
@@ -550,6 +580,12 @@ public class RexSimplify {
    * returns UNKNOWN it will be interpreted as FALSE. */
   RexNode simplifyAnd2ForUnknownAsFalse(List<RexNode> terms,
       List<RexNode> notTerms) {
+    //noinspection unchecked
+    return simplifyAnd2ForUnknownAsFalse(terms, notTerms, Comparable.class);
+  }
+
+  private <C extends Comparable<C>> RexNode simplifyAnd2ForUnknownAsFalse(
+      List<RexNode> terms, List<RexNode> notTerms, Class<C> clazz) {
     for (RexNode term : terms) {
       if (term.isAlwaysFalse()) {
         return rexBuilder.makeLiteral(false);
@@ -563,13 +599,32 @@ public class RexSimplify {
       return simplify(terms.get(0));
     }
     // Try to simplify the expression
-    final Multimap<String, Pair<String, RexNode>> equalityTerms =
-        ArrayListMultimap.create();
+    final Multimap<String, Pair<String, RexNode>> equalityTerms = ArrayListMultimap.create();
+    final Map<String, Pair<Range<C>, List<RexNode>>> rangeTerms =
+        new HashMap<>();
     final Map<String, String> equalityConstantTerms = new HashMap<>();
     final Set<String> negatedTerms = new HashSet<>();
     final Set<String> nullOperands = new HashSet<>();
     final Set<RexNode> notNullOperands = new LinkedHashSet<>();
     final Set<String> comparedOperands = new HashSet<>();
+
+    // Add the predicates from the source to the range terms.
+    for (RexNode predicate : predicates.pulledUpPredicates) {
+      final Comparison comparison = Comparison.of(predicate);
+      if (comparison != null
+          && comparison.kind != SqlKind.NOT_EQUALS) { // not supported yet
+        final C v0 = comparison.literal.getValueAs(clazz);
+        if (v0 != null) {
+          final RexNode result = processRange(rexBuilder, terms, rangeTerms,
+              predicate, comparison.ref, v0, comparison.kind);
+          if (result != null) {
+            // Not satisfiable
+            return result;
+          }
+        }
+      }
+    }
+
     for (int i = 0; i < terms.size(); i++) {
       RexNode term = terms.get(i);
       if (!RexUtil.isDeterministic(term)) {
@@ -611,43 +666,58 @@ public class RexSimplify {
           RexCall rightCast = (RexCall) right;
           comparedOperands.add(rightCast.getOperands().get(0).toString());
         }
-        // Check for equality on different constants. If the same ref or
-        // CAST(ref) is equal to different constants, this condition cannot be
-        // satisfied, and hence it can be evaluated to FALSE.
+        final Comparison comparison = Comparison.of(term);
+        // Check for comparison with null values
+        if (comparison != null
+            && comparison.literal.getValue() == null) {
+          return rexBuilder.makeLiteral(false);
+        }
+        // Check for equality on different constants. If the same ref or CAST(ref)
+        // is equal to different constants, this condition cannot be satisfied,
+        // and hence it can be evaluated to FALSE
         if (term.getKind() == SqlKind.EQUALS) {
-          final boolean leftRef = RexUtil.isReferenceOrAccess(left, true);
-          final boolean rightRef = RexUtil.isReferenceOrAccess(right, true);
-          if (right instanceof RexLiteral && leftRef) {
-            final String literal = right.toString();
+          if (comparison != null) {
+            final String literal = comparison.literal.toString();
             final String prevLiteral =
-                equalityConstantTerms.put(left.toString(), literal);
+                equalityConstantTerms.put(comparison.ref.toString(), literal);
             if (prevLiteral != null && !literal.equals(prevLiteral)) {
               return rexBuilder.makeLiteral(false);
             }
-          } else if (left instanceof RexLiteral && rightRef) {
-            final String literal = left.toString();
-            final String prevLiteral =
-                equalityConstantTerms.put(right.toString(), literal);
-            if (prevLiteral != null && !literal.equals(prevLiteral)) {
-              return rexBuilder.makeLiteral(false);
-            }
-          } else if (leftRef && rightRef) {
+          } else if (RexUtil.isReferenceOrAccess(left, true)
+              && RexUtil.isReferenceOrAccess(right, true)) {
             equalityTerms.put(left.toString(), Pair.of(right.toString(), term));
           }
         }
         // Assume the expression a > 5 is part of a Filter condition.
         // Then we can derive the negated term: a <= 5.
-        // But as comparison is string-based and thus operands order-dependent,
+        // But as the comparison is string based and thus operands order dependent,
         // we should also add the inverted negated term: 5 >= a.
-        // Observe that for creating the inverted term we invert the list of
-        // operands.
+        // Observe that for creating the inverted term we invert the list of operands.
         RexNode negatedTerm = RexUtil.negate(rexBuilder, call);
         if (negatedTerm != null) {
           negatedTerms.add(negatedTerm.toString());
-          RexNode invertNegatedTerm =
-              RexUtil.invert(rexBuilder, (RexCall) negatedTerm);
+          RexNode invertNegatedTerm = RexUtil.invert(rexBuilder, (RexCall) negatedTerm);
           if (invertNegatedTerm != null) {
             negatedTerms.add(invertNegatedTerm.toString());
+          }
+        }
+        // Remove terms that are implied by predicates on the input,
+        // or weaken terms that are partially implied.
+        // E.g. given predicate "x >= 5" and term "x between 3 and 10"
+        // we weaken to term to "x between 5 and 10".
+        final RexNode term2 = simplifyUsingPredicates(term, clazz);
+        if (term2 != term) {
+          terms.set(i, term = term2);
+        }
+        // Range
+        if (comparison != null
+            && comparison.kind != SqlKind.NOT_EQUALS) { // not supported yet
+          final C constant = comparison.literal.getValueAs(clazz);
+          final RexNode result = processRange(rexBuilder, terms, rangeTerms,
+              term, comparison.ref, constant, comparison.kind);
+          if (result != null) {
+            // Not satisfiable
+            return result;
           }
         }
         break;
@@ -712,13 +782,12 @@ public class RexSimplify {
     // Example #1. x AND y AND z AND NOT (x AND y)  - not satisfiable
     // Example #2. x AND y AND NOT (x AND y)        - not satisfiable
     // Example #3. x AND y AND NOT (x AND y AND z)  - may be satisfiable
-    final Set<String> termsSet = new HashSet<String>(RexUtil.strings(terms));
+    final Set<String> termsSet = new HashSet<>(RexUtil.strings(terms));
     for (RexNode notDisjunction : notTerms) {
       if (!RexUtil.isDeterministic(notDisjunction)) {
         continue;
       }
-      final List<String> terms2Set =
-          RexUtil.strings(RelOptUtil.conjunctions(notDisjunction));
+      final List<String> terms2Set = RexUtil.strings(RelOptUtil.conjunctions(notDisjunction));
       if (termsSet.containsAll(terms2Set)) {
         return rexBuilder.makeLiteral(false);
       }
@@ -736,6 +805,90 @@ public class RexSimplify {
       }
     }
     return RexUtil.composeConjunction(rexBuilder, terms, false);
+  }
+
+  private <C extends Comparable<C>> RexNode simplifyUsingPredicates(RexNode e,
+      Class<C> clazz) {
+    final Comparison comparison = Comparison.of(e);
+    // Check for comparison with null values
+    if (comparison == null
+        || comparison.kind == SqlKind.NOT_EQUALS
+        || comparison.literal.getValue() == null) {
+      return e;
+    }
+    final C v0 = comparison.literal.getValueAs(clazz);
+    final Range<C> range = range(comparison.kind, v0);
+    final Range<C> range2 =
+        residue(comparison.ref, range, predicates.pulledUpPredicates,
+            clazz);
+    if (range2 == null) {
+      // Term is impossible to satisfy given these predicates
+      return rexBuilder.makeLiteral(false);
+    } else if (range2.equals(range)) {
+      // no change
+      return e;
+    } else if (range2.equals(Range.all())) {
+      // Term is always satisfied given these predicates
+      return rexBuilder.makeLiteral(true);
+    } else if (range2.lowerEndpoint().equals(range2.upperEndpoint())) {
+      if (range2.lowerBoundType() == BoundType.OPEN
+          || range2.upperBoundType() == BoundType.OPEN) {
+        // range is a point, but does not include its endpoint, therefore is
+        // effectively empty
+        return rexBuilder.makeLiteral(false);
+      }
+      // range is now a point; it's worth simplifying
+      return rexBuilder.makeCall(SqlStdOperatorTable.EQUALS, comparison.ref,
+          rexBuilder.makeLiteral(range2.lowerEndpoint(),
+              comparison.literal.getType(), comparison.literal.getTypeName()));
+    } else {
+      // range has been reduced but it's not worth simplifying
+      return e;
+    }
+  }
+
+  /** Weakens a term so that it checks only what is not implied by predicates.
+   *
+   * <p>The term is broken into "ref comparison constant",
+   * for example "$0 &lt; 5".
+   *
+   * <p>Examples:
+   * <ul>
+   *
+   * <li>{@code residue($0 < 10, [$0 < 5])} returns {@code true}
+   *
+   * <li>{@code residue($0 < 10, [$0 < 20, $0 > 0])} returns {@code $0 < 10}
+   * </ul>
+   */
+  private <C extends Comparable<C>> Range<C> residue(RexNode ref, Range<C> r0,
+      List<RexNode> predicates, Class<C> clazz) {
+    for (RexNode predicate : predicates) {
+      switch (predicate.getKind()) {
+      case EQUALS:
+      case LESS_THAN:
+      case LESS_THAN_OR_EQUAL:
+      case GREATER_THAN:
+      case GREATER_THAN_OR_EQUAL:
+        final RexCall call = (RexCall) predicate;
+        if (call.operands.get(0).equals(ref)
+            && call.operands.get(1) instanceof RexLiteral) {
+          final RexLiteral literal = (RexLiteral) call.operands.get(1);
+          final C c1 = literal.getValueAs(clazz);
+          final Range<C> r1 = range(predicate.getKind(), c1);
+          if (r0.encloses(r1)) {
+            // Given these predicates, term is always satisfied.
+            // e.g. r0 is "$0 < 10", r1 is "$0 < 5"
+            return Range.all();
+          }
+          if (r0.isConnected(r1)) {
+            return r0.intersection(r1);
+          }
+          // Ranges do not intersect. Return null meaning the empty range.
+          return null;
+        }
+      }
+    }
+    return r0;
   }
 
   /** Simplifies OR(x, x) into x, and similar. */
@@ -772,7 +925,7 @@ public class RexSimplify {
     switch (operand.getKind()) {
     case LITERAL:
       final RexLiteral literal = (RexLiteral) operand;
-      final Comparable value = literal.getValue();
+      final Comparable value = literal.getValueAs(Comparable.class);
       final SqlTypeName typeName = literal.getTypeName();
 
       // First, try to remove the cast without changing the value.
@@ -790,6 +943,7 @@ public class RexSimplify {
         case TIMESTAMP:
           return e;
         }
+        break;
       }
       final List<RexNode> reducedValues = new ArrayList<>();
       executor.reduce(rexBuilder, ImmutableList.<RexNode>of(e), reducedValues);
@@ -800,6 +954,428 @@ public class RexSimplify {
     }
   }
 
+  /** Tries to simplify CEIL/FLOOR function on top of CEIL/FLOOR.
+   *
+   * <p>Examples:
+   * <ul>
+   *
+   * <li>{@code ceil(floor($0, flag(hour)), flag(day))} returns {@code ceil($0, flag(day))}
+   *
+   * <li>{@code floor(floor($0, flag(second)), flag(day))} returns {@code floor($0, flag(day))}
+   *
+   * <li>{@code floor(ceil($0, flag(day)), flag(second))} does not change
+   *
+   * </ul>
+   */
+  private RexNode simplifyCeilFloor(RexCall e) {
+    if (e.getOperands().size() != 2) {
+      // Bail out since we only simplify ceil/floor <date>
+      return e;
+    }
+    final RexNode operand = simplify(e.getOperands().get(0));
+    switch (operand.getKind()) {
+    case CEIL:
+    case FLOOR:
+      // CEIL/FLOOR on top of CEIL/FLOOR
+      final RexCall child = (RexCall) operand;
+      if (child.getOperands().size() != 2) {
+        // Bail out since we only simplify ceil/floor <date>
+        return e;
+      }
+      final RexLiteral parentFlag = (RexLiteral) e.operands.get(1);
+      final TimeUnitRange parentFlagValue = (TimeUnitRange) parentFlag.getValue();
+      final RexLiteral childFlag = (RexLiteral) child.operands.get(1);
+      final TimeUnitRange childFlagValue = (TimeUnitRange) childFlag.getValue();
+      if (parentFlagValue != null && childFlagValue != null) {
+        if (canRollUp(parentFlagValue.startUnit, childFlagValue.startUnit)) {
+          return e.clone(e.getType(),
+              ImmutableList.of(child.getOperands().get(0), parentFlag));
+        }
+      }
+    }
+    return e.clone(e.getType(),
+        ImmutableList.of(operand, e.getOperands().get(1)));
+  }
+
+  /** Method that returns whether we can rollup from inner time unit
+   * to outer time unit. */
+  private static boolean canRollUp(TimeUnit outer, TimeUnit inner) {
+    // Special handling for QUARTER as it is not in the expected
+    // order in TimeUnit
+    switch (outer) {
+    case YEAR:
+    case MONTH:
+    case DAY:
+    case HOUR:
+    case MINUTE:
+    case SECOND:
+    case MILLISECOND:
+    case MICROSECOND:
+      switch (inner) {
+      case YEAR:
+      case QUARTER:
+      case MONTH:
+      case DAY:
+      case HOUR:
+      case MINUTE:
+      case SECOND:
+      case MILLISECOND:
+      case MICROSECOND:
+        if (inner == TimeUnit.QUARTER) {
+          return outer == TimeUnit.YEAR || outer == TimeUnit.QUARTER;
+        }
+        return outer.ordinal() <= inner.ordinal();
+      }
+      break;
+    case QUARTER:
+      switch (inner) {
+      case QUARTER:
+      case MONTH:
+      case DAY:
+      case HOUR:
+      case MINUTE:
+      case SECOND:
+      case MILLISECOND:
+      case MICROSECOND:
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Removes any casts that change nullability but not type.
+   *
+   * <p>For example, {@code CAST(1 = 0 AS BOOLEAN)} becomes {@code 1 = 0}. */
+  public RexNode removeNullabilityCast(RexNode e) {
+    return RexUtil.removeNullabilityCast(rexBuilder.getTypeFactory(), e);
+  }
+
+  private static <C extends Comparable<C>> RexNode processRange(
+      RexBuilder rexBuilder, List<RexNode> terms,
+      Map<String, Pair<Range<C>, List<RexNode>>> rangeTerms, RexNode term,
+      RexNode ref, C v0, SqlKind comparison) {
+    Pair<Range<C>, List<RexNode>> p = rangeTerms.get(ref.toString());
+    if (p == null) {
+      rangeTerms.put(ref.toString(),
+          Pair.of(range(comparison, v0),
+              (List<RexNode>) ImmutableList.of(term)));
+    } else {
+      // Exists
+      boolean removeUpperBound = false;
+      boolean removeLowerBound = false;
+      Range<C> r = p.left;
+      switch (comparison) {
+      case EQUALS:
+        if (!r.contains(v0)) {
+          // Range is empty, not satisfiable
+          return rexBuilder.makeLiteral(false);
+        }
+        rangeTerms.put(ref.toString(),
+            Pair.of(Range.singleton(v0),
+                (List<RexNode>) ImmutableList.of(term)));
+        // remove
+        for (RexNode e : p.right) {
+          Collections.replaceAll(terms, e, rexBuilder.makeLiteral(true));
+        }
+        break;
+      case LESS_THAN: {
+        int comparisonResult = 0;
+        if (r.hasUpperBound()) {
+          comparisonResult = v0.compareTo(r.upperEndpoint());
+        }
+        if (comparisonResult <= 0) {
+          // 1) No upper bound, or
+          // 2) We need to open the upper bound, or
+          // 3) New upper bound is lower than old upper bound
+          if (r.hasLowerBound()) {
+            if (v0.compareTo(r.lowerEndpoint()) <= 0) {
+              // Range is empty, not satisfiable
+              return rexBuilder.makeLiteral(false);
+            }
+            // a <= x < b OR a < x < b
+            r = Range.range(r.lowerEndpoint(), r.lowerBoundType(),
+                    v0, BoundType.OPEN);
+          } else {
+            // x < b
+            r = Range.lessThan(v0);
+          }
+
+          if (r.isEmpty()) {
+            // Range is empty, not satisfiable
+            return rexBuilder.makeLiteral(false);
+          }
+
+          // remove prev upper bound
+          removeUpperBound = true;
+        } else {
+          // Remove this term as it is contained in current upper bound
+          final int index = terms.indexOf(term);
+          if (index >= 0) {
+            terms.set(index, rexBuilder.makeLiteral(true));
+          }
+        }
+        break;
+      }
+      case LESS_THAN_OR_EQUAL: {
+        int comparisonResult = -1;
+        if (r.hasUpperBound()) {
+          comparisonResult = v0.compareTo(r.upperEndpoint());
+        }
+        if (comparisonResult < 0) {
+          // 1) No upper bound, or
+          // 2) New upper bound is lower than old upper bound
+          if (r.hasLowerBound()) {
+            if (v0.compareTo(r.lowerEndpoint()) < 0) {
+              // Range is empty, not satisfiable
+              return rexBuilder.makeLiteral(false);
+            }
+            // a <= x <= b OR a < x <= b
+            r = Range.range(r.lowerEndpoint(), r.lowerBoundType(),
+                    v0, BoundType.CLOSED);
+          } else {
+            // x <= b
+            r = Range.atMost(v0);
+          }
+
+          if (r.isEmpty()) {
+            // Range is empty, not satisfiable
+            return rexBuilder.makeLiteral(false);
+          }
+
+          // remove prev upper bound
+          removeUpperBound = true;
+        } else {
+          // Remove this term as it is contained in current upper bound
+          final int index = terms.indexOf(term);
+          if (index >= 0) {
+            terms.set(index, rexBuilder.makeLiteral(true));
+          }
+        }
+        break;
+      }
+      case GREATER_THAN: {
+        int comparisonResult = 0;
+        if (r.hasLowerBound()) {
+          comparisonResult = v0.compareTo(r.lowerEndpoint());
+        }
+        if (comparisonResult >= 0) {
+          // 1) No lower bound, or
+          // 2) We need to open the lower bound, or
+          // 3) New lower bound is greater than old lower bound
+          if (r.hasUpperBound()) {
+            if (v0.compareTo(r.upperEndpoint()) >= 0) {
+              // Range is empty, not satisfiable
+              return rexBuilder.makeLiteral(false);
+            }
+            // a < x <= b OR a < x < b
+            r = Range.range(v0, BoundType.OPEN,
+                    r.upperEndpoint(), r.upperBoundType());
+          } else {
+            // x > a
+            r = Range.greaterThan(v0);
+          }
+
+          if (r.isEmpty()) {
+            // Range is empty, not satisfiable
+            return rexBuilder.makeLiteral(false);
+          }
+
+          // remove prev lower bound
+          removeLowerBound = true;
+        } else {
+          // Remove this term as it is contained in current lower bound
+          final int index = terms.indexOf(term);
+          if (index >= 0) {
+            terms.set(index, rexBuilder.makeLiteral(true));
+          }
+        }
+        break;
+      }
+      case GREATER_THAN_OR_EQUAL: {
+        int comparisonResult = 1;
+        if (r.hasLowerBound()) {
+          comparisonResult = v0.compareTo(r.lowerEndpoint());
+        }
+        if (comparisonResult > 0) {
+          // 1) No lower bound, or
+          // 2) New lower bound is greater than old lower bound
+          if (r.hasUpperBound()) {
+            if (v0.compareTo(r.upperEndpoint()) > 0) {
+              // Range is empty, not satisfiable
+              return rexBuilder.makeLiteral(false);
+            }
+            // a <= x <= b OR a <= x < b
+            r = Range.range(v0, BoundType.CLOSED,
+                    r.upperEndpoint(), r.upperBoundType());
+          } else {
+            // x >= a
+            r = Range.atLeast(v0);
+          }
+
+          if (r.isEmpty()) {
+            // Range is empty, not satisfiable
+            return rexBuilder.makeLiteral(false);
+          }
+
+          // remove prev lower bound
+          removeLowerBound = true;
+        } else {
+          // Remove this term as it is contained in current lower bound
+          final int index = terms.indexOf(term);
+          if (index >= 0) {
+            terms.set(index, rexBuilder.makeLiteral(true));
+          }
+        }
+        break;
+      }
+      default:
+        throw new AssertionError();
+      }
+      if (removeUpperBound) {
+        ImmutableList.Builder<RexNode> newBounds = ImmutableList.builder();
+        for (RexNode e : p.right) {
+          if (isUpperBound(e)) {
+            Collections.replaceAll(terms, e, rexBuilder.makeLiteral(true));
+          } else {
+            newBounds.add(e);
+          }
+        }
+        newBounds.add(term);
+        rangeTerms.put(ref.toString(),
+            Pair.of(r, (List<RexNode>) newBounds.build()));
+      } else if (removeLowerBound) {
+        ImmutableList.Builder<RexNode> newBounds = ImmutableList.builder();
+        for (RexNode e : p.right) {
+          if (isLowerBound(e)) {
+            Collections.replaceAll(terms, e, rexBuilder.makeLiteral(true));
+          } else {
+            newBounds.add(e);
+          }
+        }
+        newBounds.add(term);
+        rangeTerms.put(ref.toString(),
+            Pair.of(r, (List<RexNode>) newBounds.build()));
+      }
+    }
+    // Default
+    return null;
+  }
+
+  private static <C extends Comparable<C>> Range<C> range(SqlKind comparison,
+      C c) {
+    switch (comparison) {
+    case EQUALS:
+      return Range.singleton(c);
+    case LESS_THAN:
+      return Range.lessThan(c);
+    case LESS_THAN_OR_EQUAL:
+      return Range.atMost(c);
+    case GREATER_THAN:
+      return Range.greaterThan(c);
+    case GREATER_THAN_OR_EQUAL:
+      return Range.atLeast(c);
+    default:
+      throw new AssertionError();
+    }
+  }
+
+  /** Comparison between a {@link RexInputRef} or {@link RexFieldAccess} and a
+   * literal. Literal may be on left or right side, and may be null. */
+  private static class Comparison {
+    final RexNode ref;
+    final SqlKind kind;
+    final RexLiteral literal;
+
+    private Comparison(RexNode ref, SqlKind kind, RexLiteral literal) {
+      this.ref = Preconditions.checkNotNull(ref);
+      this.kind = Preconditions.checkNotNull(kind);
+      this.literal = Preconditions.checkNotNull(literal);
+    }
+
+    /** Creates a comparison, or returns null. */
+    static Comparison of(RexNode e) {
+      switch (e.getKind()) {
+      case EQUALS:
+      case NOT_EQUALS:
+      case LESS_THAN:
+      case GREATER_THAN:
+      case LESS_THAN_OR_EQUAL:
+      case GREATER_THAN_OR_EQUAL:
+        final RexCall call = (RexCall) e;
+        final RexNode left = call.getOperands().get(0);
+        final RexNode right = call.getOperands().get(1);
+        switch (right.getKind()) {
+        case LITERAL:
+          if (RexUtil.isReferenceOrAccess(left, true)) {
+            return new Comparison(left, e.getKind(), (RexLiteral) right);
+          }
+        }
+        switch (left.getKind()) {
+        case LITERAL:
+          if (RexUtil.isReferenceOrAccess(right, true)) {
+            return new Comparison(right, e.getKind().reverse(),
+                (RexLiteral) left);
+          }
+        }
+      }
+      return null;
+    }
+  }
+
+  private static boolean isUpperBound(final RexNode e) {
+    final List<RexNode> operands;
+    switch (e.getKind()) {
+    case LESS_THAN:
+    case LESS_THAN_OR_EQUAL:
+      operands = ((RexCall) e).getOperands();
+      return RexUtil.isReferenceOrAccess(operands.get(0), true)
+          && operands.get(1).isA(SqlKind.LITERAL);
+    case GREATER_THAN:
+    case GREATER_THAN_OR_EQUAL:
+      operands = ((RexCall) e).getOperands();
+      return RexUtil.isReferenceOrAccess(operands.get(1), true)
+          && operands.get(0).isA(SqlKind.LITERAL);
+    default:
+      return false;
+    }
+  }
+
+  private static boolean isLowerBound(final RexNode e) {
+    final List<RexNode> operands;
+    switch (e.getKind()) {
+    case LESS_THAN:
+    case LESS_THAN_OR_EQUAL:
+      operands = ((RexCall) e).getOperands();
+      return RexUtil.isReferenceOrAccess(operands.get(1), true)
+          && operands.get(0).isA(SqlKind.LITERAL);
+    case GREATER_THAN:
+    case GREATER_THAN_OR_EQUAL:
+      operands = ((RexCall) e).getOperands();
+      return RexUtil.isReferenceOrAccess(operands.get(0), true)
+          && operands.get(1).isA(SqlKind.LITERAL);
+    default:
+      return false;
+    }
+  }
+
+  /**
+   * Combines predicates AND, optimizes, and returns null if the result is
+   * always false.
+   *
+   * @param predicates Filter condition predicates
+   * @return simplified conjunction of predicates for the filter, null if always false
+   */
+  public RexNode simplifyFilterPredicates(Iterable<? extends RexNode> predicates) {
+    final RexNode simplifiedAnds = simplifyAnds(predicates);
+    if (simplifiedAnds.isAlwaysFalse()) {
+      return null;
+    }
+
+    // Remove cast of BOOLEAN NOT NULL to BOOLEAN or vice versa. Filter accepts
+    // nullable and not-nullable conditions, but a CAST might get in the way of
+    // other rewrites.
+    return removeNullabilityCast(simplifiedAnds);
+  }
 }
 
 // End RexSimplify.java

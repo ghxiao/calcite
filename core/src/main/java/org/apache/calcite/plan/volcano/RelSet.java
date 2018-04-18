@@ -158,12 +158,12 @@ class RelSet {
       assert other.getTraitSet().size() == subset.getTraitSet().size();
 
       if ((other == subset)
-        || (subsetToOthers
-          && !subset.getConvention().useAbstractConvertersForConversion(
-            subset.getTraitSet(), other.getTraitSet()))
-        || (!subsetToOthers
-          && !other.getConvention().useAbstractConvertersForConversion(
-            other.getTraitSet(), subset.getTraitSet()))) {
+          || (subsetToOthers
+              && !subset.getConvention().useAbstractConvertersForConversion(
+                  subset.getTraitSet(), other.getTraitSet()))
+          || (!subsetToOthers
+              && !other.getConvention().useAbstractConvertersForConversion(
+                  other.getTraitSet(), subset.getTraitSet()))) {
         continue;
       }
 
@@ -354,7 +354,7 @@ class RelSet {
 
     // Make sure the cost changes as a result of merging are propagated.
     final Set<RelSubset> activeSet = new HashSet<>();
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     for (RelNode parentRel : getParentRels()) {
       final RelSubset parentSubset = planner.getSubset(parentRel);
       parentSubset.propagateCostImprovements(

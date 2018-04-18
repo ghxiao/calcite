@@ -68,13 +68,11 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
   protected static final List<String> SALES_TABLES =
       Arrays.asList(
           "SCHEMA(CATALOG.SALES)",
+          "SCHEMA(CATALOG.SALES.NEST)",
           "TABLE(CATALOG.SALES.EMP)",
           "TABLE(CATALOG.SALES.EMPDEFAULTS)",
           "TABLE(CATALOG.SALES.EMPNULLABLES)",
           "TABLE(CATALOG.SALES.EMP_B)",
-          "TABLE(CATALOG.SALES.EMP_MODIFIABLEVIEW)",
-          "TABLE(CATALOG.SALES.EMP_MODIFIABLEVIEW2)",
-          "TABLE(CATALOG.SALES.EMP_MODIFIABLEVIEW3)",
           "TABLE(CATALOG.SALES.EMP_20)",
           "TABLE(CATALOG.SALES.EMPNULLABLES_20)",
           "TABLE(CATALOG.SALES.EMP_ADDRESS)",
@@ -85,7 +83,9 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "TABLE(CATALOG.SALES.SALGRADE)",
           "TABLE(CATALOG.SALES.SHIPMENTS)",
           "TABLE(CATALOG.SALES.PRODUCTS)",
-          "TABLE(CATALOG.SALES.SUPPLIERS)");
+          "TABLE(CATALOG.SALES.SUPPLIERS)",
+          "TABLE(CATALOG.SALES.EMP_R)",
+          "TABLE(CATALOG.SALES.DEPT_R)");
 
   private static final List<String> SCHEMAS =
       Arrays.asList(
@@ -93,7 +93,8 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "SCHEMA(CATALOG.DYNAMIC)",
           "SCHEMA(CATALOG.SALES)",
           "SCHEMA(CATALOG.STRUCT)",
-          "SCHEMA(CATALOG.CUSTOMER)");
+          "SCHEMA(CATALOG.CUSTOMER)",
+          "SCHEMA(CATALOG.SALES.NEST)");
 
   private static final List<String> AB_TABLES =
       Arrays.asList(
@@ -126,6 +127,7 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "KEYWORD(CEILING)",
           "KEYWORD(CHARACTER_LENGTH)",
           "KEYWORD(CHAR_LENGTH)",
+          "KEYWORD(CLASSIFIER)",
           "KEYWORD(COALESCE)",
           "KEYWORD(COLLECT)",
           "KEYWORD(CONVERT)",
@@ -157,11 +159,14 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "KEYWORD(GROUPING)",
           "KEYWORD(HOUR)",
           "KEYWORD(INTERVAL)",
+          "KEYWORD(LAG)",
           "KEYWORD(LAST_VALUE)",
+          "KEYWORD(LEAD)",
           "KEYWORD(LN)",
           "KEYWORD(LOCALTIME)",
           "KEYWORD(LOCALTIMESTAMP)",
           "KEYWORD(LOWER)",
+          "KEYWORD(MATCH_NUMBER)",
           "KEYWORD(MAX)",
           "KEYWORD(MIN)",
           "KEYWORD(MINUTE)",
@@ -171,11 +176,13 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "KEYWORD(NEW)",
           "KEYWORD(NEXT)",
           "KEYWORD(NOT)",
+          "KEYWORD(NTILE)",
           "KEYWORD(NULL)",
           "KEYWORD(NULLIF)",
           "KEYWORD(OCTET_LENGTH)",
           "KEYWORD(OVERLAY)",
           "KEYWORD(PERCENT_RANK)",
+          "KEYWORD(PERIOD)",
           "KEYWORD(POSITION)",
           "KEYWORD(POWER)",
           "KEYWORD(PREV)",
@@ -199,12 +206,19 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "KEYWORD(TRANSLATE)",
           "KEYWORD(TRIM)",
           "KEYWORD(TRUE)",
+          "KEYWORD(TRUNCATE)",
           "KEYWORD(UNKNOWN)",
           "KEYWORD(UPPER)",
           "KEYWORD(USER)",
           "KEYWORD(VAR_POP)",
           "KEYWORD(VAR_SAMP)",
           "KEYWORD(YEAR)");
+
+  protected static final List<String> QUANTIFIERS =
+      Arrays.asList(
+          "KEYWORD(ALL)",
+          "KEYWORD(ANY)",
+          "KEYWORD(SOME)");
 
   protected static final List<String> SELECT_KEYWORDS =
       Arrays.asList(
@@ -245,6 +259,7 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "KEYWORD(-)",
           "KEYWORD(.)",
           "KEYWORD(/)",
+          "KEYWORD(%)",
           "KEYWORD(<)",
           "KEYWORD(<=)",
           "KEYWORD(<>)",
@@ -254,6 +269,9 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "KEYWORD(>=)",
           "KEYWORD(AND)",
           "KEYWORD(BETWEEN)",
+          "KEYWORD(CONTAINS)",
+          "KEYWORD(EQUALS)",
+          "KEYWORD(IMMEDIATELY)",
           "KEYWORD(IN)",
           "KEYWORD(IS)",
           "KEYWORD(LIKE)",
@@ -261,8 +279,11 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
           "KEYWORD(MULTISET)",
           "KEYWORD(NOT)",
           "KEYWORD(OR)",
+          "KEYWORD(OVERLAPS)",
+          "KEYWORD(PRECEDES)",
           "KEYWORD(SIMILAR)",
           "KEYWORD(SUBMULTISET)",
+          "KEYWORD(SUCCEEDS)",
           "KEYWORD([)",
           "KEYWORD(||)");
 
@@ -579,7 +600,7 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
 
     // unfortunately cannot complete this case: syntax is too broken
     sql = "select a.empno, b.deptno from dummy a join sales.^ on a.deptno=";
-    assertComplete(sql, EXPR_KEYWORDS); // join
+    assertComplete(sql, QUANTIFIERS, EXPR_KEYWORDS); // join
   }
 
   @Test public void testJoinKeywords() {
@@ -606,7 +627,7 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
     sql =
         "select a.empno, b.deptno from sales.emp a join sales.dept b "
             + "on a.deptno=^b.dummy where empno=1";
-    assertHint(sql, EXPR_KEYWORDS, AB_TABLES); // on right
+    assertHint(sql, EXPR_KEYWORDS, QUANTIFIERS, AB_TABLES); // on right
 
     sql =
         "select a.empno, b.deptno from sales.emp a join sales.dept b "
@@ -625,7 +646,7 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
     sql =
         "select a.empno, b.deptno from sales.emp a, sales.dept b "
             + "where b.deptno=^a.dummy";
-    assertHint(sql, AB_TABLES, EXPR_KEYWORDS); // where list
+    assertHint(sql, AB_TABLES, EXPR_KEYWORDS, QUANTIFIERS); // where list
 
     sql =
         "select a.empno, b.deptno from sales.emp a, sales.dept b "
@@ -1215,7 +1236,7 @@ public class SqlAdvisorTest extends SqlValidatorTestCase {
 
   /** Factory that creates testers. */
   private static class AdvisorTesterFactory extends DelegatingSqlTestFactory {
-    public AdvisorTesterFactory() {
+    AdvisorTesterFactory() {
       super(DefaultSqlTestFactory.INSTANCE);
     }
 

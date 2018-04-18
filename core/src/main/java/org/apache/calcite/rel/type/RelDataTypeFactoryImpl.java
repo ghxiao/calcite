@@ -221,7 +221,7 @@ public abstract class RelDataTypeFactoryImpl implements RelDataTypeFactory {
     }
 
     // recursively compute column-wise least restrictive
-    final FieldInfoBuilder builder = builder();
+    final Builder builder = builder();
     for (int j = 0; j < fieldCount; ++j) {
       // REVIEW jvs 22-Jan-2004:  Always use the field name from the
       // first type?
@@ -454,7 +454,7 @@ public abstract class RelDataTypeFactoryImpl implements RelDataTypeFactory {
    * <li>s = s1 + s2</li>
    * </ul>
    *
-   * p and s are capped at their maximum values
+   * <p>p and s are capped at their maximum values
    *
    * @see Glossary#SQL2003 SQL:2003 Part 2 Section 6.26
    */
@@ -567,6 +567,7 @@ public abstract class RelDataTypeFactoryImpl implements RelDataTypeFactory {
     return Util.getDefaultCharset();
   }
 
+  @SuppressWarnings("deprecation")
   public FieldInfoBuilder builder() {
     return new FieldInfoBuilder(this);
   }

@@ -37,10 +37,11 @@ import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.CollectionType;
-
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+
+import org.joda.time.Interval;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -48,6 +49,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -70,12 +72,15 @@ class DruidConnectionImpl implements DruidConnection {
 
   public static final String DEFAULT_RESPONSE_TIMESTAMP_COLUMN = "timestamp";
   private static final SimpleDateFormat UTC_TIMESTAMP_FORMAT;
+  private static final SimpleDateFormat TIMESTAMP_FORMAT;
 
   static {
-    final TimeZone utc = DateTimeUtils.GMT_ZONE;
+    final TimeZone utc = DateTimeUtils.UTC_ZONE;
     UTC_TIMESTAMP_FORMAT =
         new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT);
     UTC_TIMESTAMP_FORMAT.setTimeZone(utc);
+    TIMESTAMP_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT);
+    TIMESTAMP_FORMAT.setTimeZone(utc);
   }
 
   DruidConnectionImpl(String url, String coordinatorUrl) {
@@ -130,6 +135,10 @@ class DruidConnectionImpl implements DruidConnection {
 
     int posTimestampField = -1;
     for (int i = 0; i < fieldTypes.size(); i++) {
+      /*@TODO This need to be revisited. The logic seems implying that only
+      one column of type timestamp is present, this is not necessarily true,
+      see https://issues.apache.org/jira/browse/CALCITE-2175
+      */
       if (fieldTypes.get(i) == ColumnMetaData.Rep.JAVA_SQL_TIMESTAMP) {
         posTimestampField = i;
         break;
@@ -246,6 +255,39 @@ class DruidConnectionImpl implements DruidConnection {
             expect(parser, JsonToken.END_OBJECT);
           }
         }
+        break;
+
+      case SCAN:
+        if (parser.nextToken() == JsonToken.START_ARRAY) {
+          while (parser.nextToken() == JsonToken.START_OBJECT) {
+            expectScalarField(parser, "segmentId");
+
+            expect(parser, JsonToken.FIELD_NAME);
+            if (parser.getCurrentName().equals("columns")) {
+              expect(parser, JsonToken.START_ARRAY);
+              while (parser.nextToken() != JsonToken.END_ARRAY) {
+                // Skip the columns list
+              }
+            }
+            if (parser.nextToken() == JsonToken.FIELD_NAME
+                && parser.getCurrentName().equals("events")
+                && parser.nextToken() == JsonToken.START_ARRAY) {
+              // Events is Array of Arrays where each array is a row
+              while (parser.nextToken() == JsonToken.START_ARRAY) {
+                for (String field : fieldNames) {
+                  parseFieldForName(fieldNames, fieldTypes, posTimestampField, rowBuilder, parser,
+                      field);
+                }
+                expect(parser, JsonToken.END_ARRAY);
+                Row row = rowBuilder.build();
+                sink.send(row);
+                rowBuilder.reset();
+                page.totalRowCount += 1;
+              }
+            }
+            expect(parser, JsonToken.END_OBJECT);
+          }
+        }
       }
     } catch (IOException | InterruptedException e) {
       throw new RuntimeException(e);
@@ -267,7 +309,12 @@ class DruidConnectionImpl implements DruidConnection {
   private void parseField(List<String> fieldNames, List<ColumnMetaData.Rep> fieldTypes,
       int posTimestampField, Row.RowBuilder rowBuilder, JsonParser parser) throws IOException {
     final String fieldName = parser.getCurrentName();
+    parseFieldForName(fieldNames, fieldTypes, posTimestampField, rowBuilder, parser, fieldName);
+  }
 
+  private void parseFieldForName(List<String> fieldNames, List<ColumnMetaData.Rep> fieldTypes,
+      int posTimestampField, Row.RowBuilder rowBuilder, JsonParser parser, String fieldName)
+      throws IOException {
     // Move to next token, which is name's value
     JsonToken token = parser.nextToken();
 
@@ -283,26 +330,42 @@ class DruidConnectionImpl implements DruidConnection {
       type = fieldTypes.get(i);
     }
 
-    if (isTimestampColumn || ColumnMetaData.Rep.JAVA_SQL_TIMESTAMP.equals(type)) {
-      try {
-        final Date parse;
-        // synchronized block to avoid race condition
+    if (isTimestampColumn || ColumnMetaData.Rep.JAVA_SQL_TIMESTAMP == type) {
+      final int fieldPos = posTimestampField != -1 ? posTimestampField : i;
+      if (token == JsonToken.VALUE_NUMBER_INT) {
+        rowBuilder.set(posTimestampField, parser.getLongValue());
+        return;
+      } else {
+        // We don't have any way to figure out the format of time upfront since we only have
+        // org.apache.calcite.avatica.ColumnMetaData.Rep.JAVA_SQL_TIMESTAMP as type to represent
+        // both timestamp and timestamp with local timezone.
+        // Logic where type is inferred can be found at DruidQuery.DruidQueryNode.getPrimitive()
+        // Thus need to guess via try and catch
         synchronized (UTC_TIMESTAMP_FORMAT) {
-          parse = UTC_TIMESTAMP_FORMAT.parse(parser.getText());
+          // synchronized block to avoid race condition
+          try {
+            // First try to parse as Timestamp with timezone.
+            rowBuilder
+                .set(fieldPos, UTC_TIMESTAMP_FORMAT.parse(parser.getText()).getTime());
+          } catch (ParseException e) {
+            // swallow the exception and try timestamp format
+            try {
+              rowBuilder
+                  .set(fieldPos, TIMESTAMP_FORMAT.parse(parser.getText()).getTime());
+            } catch (ParseException e2) {
+              // unknown format should not happen
+              throw new RuntimeException(e2);
+            }
+          }
         }
-        if (posTimestampField != -1) {
-          rowBuilder.set(posTimestampField, parse.getTime());
-        }
-      } catch (ParseException e) {
-        // ignore bad value
+        return;
       }
-      return;
     }
 
     switch (token) {
     case VALUE_NUMBER_INT:
       if (type == null) {
-        type = ColumnMetaData.Rep.INTEGER;
+        type = ColumnMetaData.Rep.LONG;
       }
       // fall through
     case VALUE_NUMBER_FLOAT:
@@ -338,8 +401,45 @@ class DruidConnectionImpl implements DruidConnection {
       break;
     case VALUE_STRING:
     default:
-      rowBuilder.set(i, parser.getText());
-      break;
+      final String s = parser.getText();
+      if (type != null) {
+        switch (type) {
+        case LONG:
+        case PRIMITIVE_LONG:
+        case SHORT:
+        case PRIMITIVE_SHORT:
+        case INTEGER:
+        case PRIMITIVE_INT:
+          switch (s) {
+          case "Infinity":
+          case "-Infinity":
+          case "NaN":
+            throw new RuntimeException("/ by zero");
+          }
+          rowBuilder.set(i, Long.valueOf(s));
+          break;
+        case FLOAT:
+        case PRIMITIVE_FLOAT:
+        case PRIMITIVE_DOUBLE:
+        case NUMBER:
+        case DOUBLE:
+          switch (s) {
+          case "Infinity":
+            rowBuilder.set(i, Double.POSITIVE_INFINITY);
+            return;
+          case "-Infinity":
+            rowBuilder.set(i, Double.NEGATIVE_INFINITY);
+            return;
+          case "NaN":
+            rowBuilder.set(i, Double.NaN);
+            return;
+          }
+          rowBuilder.set(i, Double.valueOf(s));
+          break;
+        }
+      } else {
+        rowBuilder.set(i, s);
+      }
     }
   }
 
@@ -383,7 +483,7 @@ class DruidConnectionImpl implements DruidConnection {
     }
     expect(parser, JsonToken.START_OBJECT);
     while (parser.nextToken() != JsonToken.END_OBJECT) {
-        // empty
+      // empty
     }
   }
 
@@ -458,8 +558,9 @@ class DruidConnectionImpl implements DruidConnection {
 
   /** Reads segment metadata, and populates a list of columns and metrics. */
   void metadata(String dataSourceName, String timestampColumnName,
-      List<LocalInterval> intervals,
-      Map<String, SqlTypeName> fieldBuilder, Set<String> metricNameBuilder) {
+      List<Interval> intervals,
+      Map<String, SqlTypeName> fieldBuilder, Set<String> metricNameBuilder,
+      Map<String, List<ComplexMetric>> complexMetrics) {
     final String url = this.url + "/druid/v2/?pretty";
     final Map<String, String> requestHeaders =
         ImmutableMap.of("Content-Type", "application/json");
@@ -476,7 +577,7 @@ class DruidConnectionImpl implements DruidConnection {
               JsonSegmentMetadata.class);
       final List<JsonSegmentMetadata> list = mapper.readValue(in, listType);
       in.close();
-      fieldBuilder.put(timestampColumnName, SqlTypeName.TIMESTAMP);
+      fieldBuilder.put(timestampColumnName, SqlTypeName.TIMESTAMP_WITH_LOCAL_TIME_ZONE);
       for (JsonSegmentMetadata o : list) {
         for (Map.Entry<String, JsonColumn> entry : o.columns.entrySet()) {
           if (entry.getKey().equals(DruidTable.DEFAULT_TIMESTAMP_COLUMN)) {
@@ -485,8 +586,8 @@ class DruidConnectionImpl implements DruidConnection {
           }
           final DruidType druidType;
           try {
-            druidType = DruidType.valueOf(entry.getValue().type);
-          } catch (IllegalArgumentException e) {
+            druidType = DruidType.getTypeFromMetaData(entry.getValue().type);
+          } catch (AssertionError e) {
             // ignore exception; not a supported type
             continue;
           }
@@ -498,7 +599,17 @@ class DruidConnectionImpl implements DruidConnection {
             if (!fieldBuilder.containsKey(entry.getKey())) {
               continue;
             }
-            metricNameBuilder.add(entry.getKey());
+            DruidType type = DruidType.getTypeFromMetaData(entry.getValue().type);
+            if (type.isComplex()) {
+              // Each complex type will get their own alias, equal to their actual name.
+              // Maybe we should have some smart string replacement strategies to make the column
+              // names more natural.
+              List<ComplexMetric> metricList = new ArrayList<>();
+              metricList.add(new ComplexMetric(entry.getKey(), type));
+              complexMetrics.put(entry.getKey(), metricList);
+            } else {
+              metricNameBuilder.add(entry.getKey());
+            }
           }
         }
       }
@@ -549,7 +660,9 @@ class DruidConnectionImpl implements DruidConnection {
   }
 
   /** An {@link Enumerator} that gets its rows from a {@link BlockingQueue}.
-   * There are other fields to signal errors and end-of-data. */
+   * There are other fields to signal errors and end-of-data.
+   *
+   * @param <E> element type */
   private static class BlockingQueueEnumerator<E> implements Enumerator<E> {
     final BlockingQueue<E> queue = new ArrayBlockingQueue<>(1000);
     final AtomicBoolean done = new AtomicBoolean(false);
@@ -600,7 +713,6 @@ class DruidConnectionImpl implements DruidConnection {
     }
   }
 
-
   /** Result of a "segmentMetadata" call, populated by Jackson. */
   @SuppressWarnings({ "WeakerAccess", "unused" })
   private static class JsonSegmentMetadata {
@@ -632,36 +744,9 @@ class DruidConnectionImpl implements DruidConnection {
     public String fieldName;
 
     DruidType druidType() {
-      if (type.startsWith("long")) {
-        return DruidType.LONG;
-      }
-      if (type.startsWith("double")) {
-        return DruidType.FLOAT;
-      }
-      if (type.equals("hyperUnique")) {
-        return DruidType.hyperUnique;
-      }
-      throw new AssertionError("unknown type " + type);
+      return DruidType.getTypeFromMetric(type);
     }
   }
-
-  /** Druid type. */
-  enum DruidType {
-    LONG(SqlTypeName.BIGINT),
-    // SQL DOUBLE and FLOAT types are both 64 bit, but we use DOUBLE because
-    // people find FLOAT confusing.
-    FLOAT(SqlTypeName.DOUBLE),
-    STRING(SqlTypeName.VARCHAR),
-    hyperUnique(SqlTypeName.VARBINARY);
-
-    /** The corresponding SQL type. */
-    public final SqlTypeName sqlType;
-
-    DruidType(SqlTypeName sqlType) {
-      this.sqlType = sqlType;
-    }
-  }
-
 }
 
 // End DruidConnectionImpl.java

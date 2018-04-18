@@ -219,12 +219,13 @@ public class Ast {
   /** Parse tree node for FOREACH statement (nested).
    *
    * <p>Syntax:
+   *
    * <blockquote><code>
    * alias = FOREACH nested_alias {
    *   alias = nested_op; [alias = nested_op; ]...
    *   GENERATE expression [, expression]...
    * };<br>
-   *
+   * &nbsp;
    * nested_op ::= DISTINCT, FILTER, LIMIT, ORDER, SAMPLE
    * </code>
    * </blockquote>
@@ -569,7 +570,7 @@ public class Ast {
 
     public UnParser appendList(List<? extends Node> list) {
       append("[").in();
-      for (Ord<Node> n : Ord.zip(list)) {
+      for (Ord<Node> n : Ord.<Node>zip(list)) {
         newline().append(n.e);
         if (n.i < list.size() - 1) {
           append(",");

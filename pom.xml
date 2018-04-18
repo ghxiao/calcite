@@ -20,14 +20,14 @@ limitations under the License.
   <parent>
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
-    <version>18</version>
+    <version>19</version>
   </parent>
 
   <!-- The basics. -->
   <groupId>org.apache.calcite</groupId>
   <artifactId>calcite</artifactId>
   <packaging>pom</packaging>
-  <version>1.13.0-SNAPSHOT</version>
+  <version>1.17.0-SNAPSHOT</version>
 
   <!-- More project information. -->
   <name>Calcite</name>
@@ -46,21 +46,29 @@ limitations under the License.
   </mailingLists>
 
   <properties>
+    <surefire.parallel>both</surefire.parallel>
+
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <top.dir>${project.basedir}</top.dir>
     <version.major>1</version.major>
-    <version.minor>12</version.minor>
+    <version.minor>16</version.minor>
+
+    <!-- Don't fail the build for vulnerabilities below this threshold. -->
+    <failBuildOnCVSS>8</failBuildOnCVSS>
 
     <!-- This list is in alphabetical order. -->
     <airlift-tpch.version>0.1</airlift-tpch.version>
-    <avatica.version>1.9.0</avatica.version>
-    <build-helper-maven-plugin.version>1.9</build-helper-maven-plugin.version>
-    <cassandra-driver-core.version>3.1.4</cassandra-driver-core.version>
+    <avatica.version>1.11.0</avatica.version>
+    <build-helper-maven-plugin.version>3.0.0</build-helper-maven-plugin.version>
+    <cassandra-driver-core.version>3.4.0</cassandra-driver-core.version>
     <checksum-maven-plugin.version>1.2</checksum-maven-plugin.version>
+    <chinook-data-hsqldb.version>0.1</chinook-data-hsqldb.version>
     <commons-dbcp.version>1.4</commons-dbcp.version>
     <commons-lang3.version>3.2</commons-lang3.version>
     <commons-logging.version>1.1.3</commons-logging.version>
     <elasticsearch-java-driver.version>2.3.2</elasticsearch-java-driver.version>
+    <elasticsearch5-java-driver.version>5.5.2</elasticsearch5-java-driver.version>
+    <esri-geometry-api.version>2.0.0</esri-geometry-api.version>
     <findbugs.version>3.0.1</findbugs.version>
     <fmpp-maven-plugin.version>1.0</fmpp-maven-plugin.version>
     <foodmart-data-hsqldb.version>0.3</foodmart-data-hsqldb.version>
@@ -68,47 +76,48 @@ limitations under the License.
     <forbiddenapis.version>2.3</forbiddenapis.version>
     <freemarker.version>2.3.25-incubating</freemarker.version>
     <git-commit-id-plugin.version>2.1.9</git-commit-id-plugin.version>
+    <geode.version>1.3.0</geode.version>
 
     <!-- We support (and test against) Guava versions between
-         14.0.1 (Hive) and 21.0 (most recent; supports only JDK8 and up).
-         Override with your preferred version and it should work. -->
+         19.0 and 23.0. Default is 19.0 due to Cassandra adapter. -->
     <guava.version>19.0</guava.version>
     <joda.version>2.8.1</joda.version>
     <h2.version>1.4.185</h2.version>
-    <hadoop.version>2.7.0</hadoop.version>
+    <!-- Require Hadoop 2.7.4+ due to HADOOP-14586 -->
+    <hadoop.version>2.7.5</hadoop.version>
     <hamcrest.version>1.3</hamcrest.version>
     <hppc.version>0.7.1</hppc.version>
-    <hsqldb.version>2.3.1</hsqldb.version>
+    <hsqldb.version>2.4.0</hsqldb.version>
     <httpclient.version>4.5.2</httpclient.version>
     <httpcore.version>4.4.4</httpcore.version>
     <hydromatic-resource.version>0.6</hydromatic-resource.version>
     <hydromatic-toolbox.version>0.3</hydromatic-toolbox.version>
     <hydromatic-tpcds.version>0.4</hydromatic-tpcds.version>
-    <jackson.version>2.6.3</jackson.version>
+    <jackson.version>2.9.4</jackson.version>
     <janino.version>2.7.6</janino.version>
-    <java-diff.version>1.1</java-diff.version>
+    <java-diff.version>1.1.1</java-diff.version>
     <javacc-maven-plugin.version>2.4</javacc-maven-plugin.version>
     <jcip-annotations.version>1.0-1</jcip-annotations.version>
-    <jetty.version>9.2.15.v20160210</jetty.version>
+    <jetty.version>9.2.19.v20160908</jetty.version>
     <jmh.version>1.12</jmh.version>
     <jsoup.version>1.10.2</jsoup.version>
     <junit.version>4.12</junit.version>
-    <maven-checkstyle-plugin.version>2.12.1</maven-checkstyle-plugin.version>
+    <maven-checkstyle-plugin.version>3.0.0</maven-checkstyle-plugin.version>
     <maven-dependency-plugin.version>2.10</maven-dependency-plugin.version>
-    <!-- Apache 18 has 3.0.1, but need 3.0.2 for [MSOURCES-94]. -->
-    <maven-jar-plugin.version>3.0.2</maven-jar-plugin.version>
-    <!-- Apache 18 has 2.10.3, but need 2.10.4 for [MJAVADOC-442]. -->
-    <maven-javadoc-plugin.version>2.10.4</maven-javadoc-plugin.version>
+    <maven-enforcer-plugin.version>3.0.0-M1</maven-enforcer-plugin.version>
+    <!-- Apache 19 has 2.10.4, but need 3.0.0 for [LANG-1365]. -->
+    <maven-javadoc-plugin.version>3.0.0</maven-javadoc-plugin.version>
     <maven-scm-provider.version>1.9.4</maven-scm-provider.version>
     <maven-shade-plugin.version>2.1</maven-shade-plugin.version>
-    <!-- Apache 18 has 3.0.0, but need 3.0.1 for [MSOURCES-94]. -->
-    <maven-source-plugin.version>3.0.1</maven-source-plugin.version>
+    <!-- Apache 19 has 2.20.1, but need 2.21.0+ for [MPOM-184] -->
+    <maven-surefire-plugin.version>2.21.0</maven-surefire-plugin.version>
     <mockito.version>2.5.5</mockito.version>
-    <mongo-java-driver.version>2.12.3</mongo-java-driver.version>
+    <mongo-java-driver.version>3.5.0</mongo-java-driver.version>
     <mysql-driver.version>5.1.20</mysql-driver.version>
     <natty.version>0.13</natty.version>
     <opencsv.version>2.3</opencsv.version>
     <oracle-jdbc6-driver.version>11.2.0.2.0</oracle-jdbc6-driver.version>
+    <owasp-dependency-check.version>2.1.1</owasp-dependency-check.version>
     <pig.version>0.16.0</pig.version>
     <aggdesigner.version>6.0</aggdesigner.version>
     <postgresql.version>9.3-1102-jdbc3</postgresql.version>
@@ -117,10 +126,11 @@ limitations under the License.
     <scott-data-hsqldb.version>0.1</scott-data-hsqldb.version>
     <servlet.version>3.0.1</servlet.version>
     <slf4j.version>1.7.13</slf4j.version>
-    <spark.version>1.6.1</spark.version>
-    <sqlline.version>1.2.0</sqlline.version>
+    <spark.version>2.2.0</spark.version>
+    <sqlline.version>1.3.0</sqlline.version>
     <xalan.version>2.7.1</xalan.version>
     <xerces.version>2.9.1</xerces.version>
+    <sketches.version>0.9.0</sketches.version>
   </properties>
 
   <issueManagement>
@@ -139,14 +149,17 @@ limitations under the License.
     <module>cassandra</module>
     <module>core</module>
     <module>druid</module>
-    <module>elasticsearch</module>
+    <module>elasticsearch2</module>
+    <module>elasticsearch5</module>
     <module>example</module>
     <module>file</module>
+    <module>geode</module>
     <module>linq4j</module>
     <module>mongodb</module>
     <module>pig</module>
     <module>piglet</module>
     <module>plus</module>
+    <module>server</module>
     <module>spark</module>
     <module>splunk</module>
     <module>ubenchmark</module>
@@ -214,6 +227,11 @@ limitations under the License.
         <version>${cassandra-driver-core.version}</version>
       </dependency>
       <dependency>
+        <groupId>com.esri.geometry</groupId>
+        <artifactId>esri-geometry-api</artifactId>
+        <version>${esri-geometry-api.version}</version>
+      </dependency>
+      <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-core</artifactId>
         <version>${jackson.version}</version>
@@ -244,6 +262,11 @@ limitations under the License.
         <version>${guava.version}</version>
       </dependency>
       <dependency>
+        <groupId>com.h2database</groupId>
+        <artifactId>h2</artifactId>
+        <version>${h2.version}</version>
+      </dependency>
+      <dependency>
         <groupId>com.joestelmach</groupId>
         <artifactId>natty</artifactId>
         <version>${natty.version}</version>
@@ -254,9 +277,9 @@ limitations under the License.
         <version>${oracle-jdbc6-driver.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.h2database</groupId>
-        <artifactId>h2</artifactId>
-        <version>${h2.version}</version>
+        <groupId>com.yahoo.datasketches</groupId>
+        <artifactId>sketches-core</artifactId>
+        <version>${sketches.version}</version>
       </dependency>
       <dependency>
         <groupId>javax.servlet</groupId>
@@ -282,6 +305,11 @@ limitations under the License.
         <groupId>net.hydromatic</groupId>
         <artifactId>aggdesigner-algorithm</artifactId>
         <version>${aggdesigner.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.hydromatic</groupId>
+        <artifactId>chinook-data-hsqldb</artifactId>
+        <version>${chinook-data-hsqldb.version}</version>
       </dependency>
       <dependency>
         <groupId>net.hydromatic</groupId>
@@ -317,6 +345,11 @@ limitations under the License.
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-lang3</artifactId>
         <version>${commons-lang3.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.geode</groupId>
+        <artifactId>geode-core</artifactId>
+        <version>${geode.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.hadoop</groupId>
@@ -388,6 +421,11 @@ limitations under the License.
       <dependency>
         <groupId>org.hsqldb</groupId>
         <artifactId>hsqldb</artifactId>
+        <version>${hsqldb.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.hsqldb</groupId>
+        <artifactId>sqltool</artifactId>
         <version>${hsqldb.version}</version>
       </dependency>
       <dependency>
@@ -490,7 +528,10 @@ limitations under the License.
             <exclude>**/SimpleCharStream.class</exclude>
             <exclude>**/*TokenManager.class</exclude>
             <exclude>**/TokenMgrError.class</exclude>
+            <exclude>**/org/apache/calcite/adapter/os/Processes$ProcessFactory.class</exclude>
             <exclude>**/org/apache/calcite/runtime/Resources$Inst.class</exclude>
+            <exclude>**/org/apache/calcite/test/concurrent/ConcurrentTestCommandScript.class</exclude>
+            <exclude>**/org/apache/calcite/test/concurrent/ConcurrentTestCommandScript$ShellCommand.class</exclude>
             <exclude>**/org/apache/calcite/util/Unsafe.class</exclude>
           </excludes>
         </configuration>
@@ -575,8 +616,8 @@ limitations under the License.
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
-          <source>1.7</source>
-          <target>1.7</target>
+          <source>1.8</source>
+          <target>1.8</target>
           <compilerArgument>-Xlint:deprecation</compilerArgument>
         </configuration>
       </plugin>
@@ -605,6 +646,12 @@ limitations under the License.
             <groupId>net.hydromatic</groupId>
             <artifactId>toolbox</artifactId>
             <version>${hydromatic-toolbox.version}</version>
+            <exclusions>
+              <exclusion>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+              </exclusion>
+            </exclusions>
           </dependency>
         </dependencies>
       </plugin>
@@ -624,6 +671,10 @@ limitations under the License.
         </executions>
       </plugin>
       <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+      </plugin>
+      <plugin>
         <!-- This is the configuration used by "mvn javadoc:javadoc". It is
              configured strict, so that it shows errors such as broken links in
              javadoc on private methods. The configuration for "mvn site" is
@@ -631,10 +682,11 @@ limitations under the License.
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-javadoc-plugin</artifactId>
         <configuration>
+          <additionalparam>-html5</additionalparam>
           <links>
-            <link>https://docs.oracle.com/javase/8/docs/api/</link>
+            <link>https://docs.oracle.com/javase/9/docs/api/</link>
           </links>
-          <excludePackageNames>org.apache.calcite.benchmarks.generated,org.apache.calcite.sql.parser.impl,org.apache.calcite.sql.parser.parserextensiontesting,org.apache.calcite.piglet.parser,org.openjdk.jmh</excludePackageNames>
+          <excludePackageNames>org.apache.calcite.benchmarks.generated,org.apache.calcite.sql.parser.ddl,org.apache.calcite.sql.parser.impl,org.apache.calcite.sql.parser.parserextensiontesting,org.apache.calcite.piglet.parser,org.openjdk.jmh</excludePackageNames>
           <show>private</show>
         </configuration>
       </plugin>
@@ -738,6 +790,26 @@ limitations under the License.
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-enforcer-plugin</artifactId>
+          <version>${maven-enforcer-plugin.version}</version>
+          <executions>
+            <execution>
+              <id>enforce-java</id>
+              <goals>
+                <goal>enforce</goal>
+              </goals>
+              <configuration>
+                <rules>
+                  <requireJavaVersion>
+                    <version>[1.8,)</version>
+                  </requireJavaVersion>
+                </rules>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-failsafe-plugin</artifactId>
           <executions>
             <execution>
@@ -766,11 +838,9 @@ limitations under the License.
           <artifactId>maven-javadoc-plugin</artifactId>
           <version>${maven-javadoc-plugin.version}</version>
         </plugin>
-        <!-- Override base, which uses version 3.0.0. -->
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-jar-plugin</artifactId>
-          <version>${maven-jar-plugin.version}</version>
           <configuration>
             <archive>
               <manifest>
@@ -787,16 +857,12 @@ limitations under the License.
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
-          <artifactId>maven-source-plugin</artifactId>
-          <version>${maven-source-plugin.version}</version>
-        </plugin>
-        <plugin>
-          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven-surefire-plugin.version}</version>
           <configuration>
             <threadCount>1</threadCount>
             <perCoreThreadCount>true</perCoreThreadCount>
-            <parallel>both</parallel>
+            <parallel>${surefire.parallel}</parallel>
             <forkMode>once</forkMode>
             <systemProperties>
               <systemProperty>
@@ -808,8 +874,8 @@ limitations under the License.
                 <value>tr</value>
               </systemProperty>
             </systemProperties>
-            <!--<argLine>-Xmx1536m -XX:MaxPermSize=256m -Duser.timezone=${user.timezone} -Duser.country=${user.country} -Duser.language=${user.language}</argLine>-->
-            <argLine>-Xmx1536m -XX:MaxPermSize=256m</argLine>
+            <!--<argLine>-Xmx1536m -Duser.timezone=${user.timezone} -Duser.country=${user.country} -Duser.language=${user.language}</argLine>-->
+            <argLine>-Xmx1536m</argLine>
           </configuration>
         </plugin>
         <plugin>
@@ -821,6 +887,11 @@ limitations under the License.
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>javacc-maven-plugin</artifactId>
           <version>${javacc-maven-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.owasp</groupId>
+          <artifactId>dependency-check-maven</artifactId>
+          <version>${owasp-dependency-check.version}</version>
         </plugin>
         <plugin>
           <groupId>pl.project13.maven</groupId>
@@ -841,7 +912,7 @@ limitations under the License.
           <links>
             <link>https://docs.oracle.com/javase/8/docs/api/</link>
           </links>
-          <excludePackageNames>org.apache.calcite.benchmarks.generated,org.apache.calcite.sql.parser.impl,org.apache.calcite.sql.parser.parserextensiontesting,org.apache.calcite.piglet.parser,org.openjdk.jmh</excludePackageNames>
+          <excludePackageNames>org.apache.calcite.benchmarks.generated,org.apache.calcite.sql.parser.ddl,org.apache.calcite.sql.parser.impl,org.apache.calcite.sql.parser.parserextensiontesting,org.apache.calcite.piglet.parser,org.openjdk.jmh</excludePackageNames>
           <notimestamp>true</notimestamp>
           <windowtitle>Apache Calcite API</windowtitle>
         </configuration>
@@ -896,8 +967,7 @@ limitations under the License.
             </executions>
             <configuration>
               <algorithms>
-                <algorithm>MD5</algorithm>
-                <algorithm>SHA-1</algorithm>
+                <algorithm>SHA-256</algorithm>
               </algorithms>
               <failOnError>false</failOnError>
             </configuration>
@@ -1024,6 +1094,29 @@ limitations under the License.
                 <forceLongFormat>true</forceLongFormat>
               </gitDescribe>
             </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <!-- Extra checks that are disabled in the regular build, enabled for
+      releases and on demand. -->
+      <id>pedantic</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.owasp</groupId>
+            <artifactId>dependency-check-maven</artifactId>
+            <configuration>
+              <failBuildOnCVSS>${failBuildOnCVSS}</failBuildOnCVSS>
+            </configuration>
+            <executions>
+              <execution>
+                <goals>
+                  <goal>check</goal>
+                </goals>
+              </execution>
+            </executions>
           </plugin>
         </plugins>
       </build>

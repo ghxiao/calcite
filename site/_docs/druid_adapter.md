@@ -60,7 +60,7 @@ A basic example of a model file is given below:
           "factory": "org.apache.calcite.adapter.druid.DruidTableFactory",
           "operand": {
             "dataSource": "wikiticker",
-            "interval": "1900-01-09T00:00:00.000/2992-01-10T00:00:00.000",
+            "interval": "1900-01-09T00:00:00.000Z/2992-01-10T00:00:00.000Z",
             "timestampColumn": "time",
             "dimensions": [
               "channel",
@@ -78,7 +78,6 @@ A basic example of a model file is given below:
               "page",
               "regionIsoCode",
               "regionName",
-              "user"
             ],
             "metrics": [
               {
@@ -103,8 +102,11 @@ A basic example of a model file is given below:
               {
                 "name" : "user_unique",
                 "type" : "hyperUnique",
-                "fieldName" : "user"
+                "fieldName" : "user_id"
               }
+            ],
+            "complexMetrics" : [
+              "user_id"
             ]
           }
         }
@@ -165,6 +167,18 @@ part of the query to Druid, including the `COUNT(*)` function,
 but not the `ORDER BY ... LIMIT`. (We plan to lift this restriction;
 see [[CALCITE-1206](https://issues.apache.org/jira/browse/CALCITE-1206)].)
 
+# Complex Metrics
+Druid has special metrics that produce quick but approximate results.
+Currently there are two types:
+
+* `hyperUnique` - HyperLogLog data sketch used to estimate the cardinality of a dimension
+* `thetaSketch` - Theta sketch used to also estimate the cardinality of a dimension,
+  but can be used to perform set operations as well.
+
+In the model definition, there is an array of Strings called `complexMetrics` that declares
+the alias for each complex metric defined. The alias is used in SQL, but it's real column name
+is used when Calcite generates the JSON query for druid.
+
 # Foodmart data set
 
 The test VM also includes a data set that denormalizes
@@ -199,7 +213,7 @@ but with `dimensions`, `metrics` and `timestampColumn` removed:
           "factory": "org.apache.calcite.adapter.druid.DruidTableFactory",
           "operand": {
             "dataSource": "wikiticker",
-            "interval": "1900-01-09T00:00:00.000/2992-01-10T00:00:00.000"
+            "interval": "1900-01-09T00:00:00.000Z/2992-01-10T00:00:00.000Z"
           }
         }
       ]

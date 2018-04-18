@@ -17,6 +17,7 @@
 package org.apache.calcite.test;
 
 import org.apache.calcite.plan.AbstractRelOptPlanner;
+import org.apache.calcite.plan.Context;
 import org.apache.calcite.plan.RelOptCostImpl;
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptRule;
@@ -53,9 +54,9 @@ public class MockRelOptPlanner extends AbstractRelOptPlanner {
   //~ Methods ----------------------------------------------------------------
 
   /** Creates MockRelOptPlanner. */
-  public MockRelOptPlanner() {
-    super(RelOptCostImpl.FACTORY, null);
-    setExecutor(new RexExecutorImpl(Schemas.createDataContext(null)));
+  public MockRelOptPlanner(Context context) {
+    super(RelOptCostImpl.FACTORY, context);
+    setExecutor(new RexExecutorImpl(Schemas.createDataContext(null, null)));
   }
 
   // implement RelOptPlanner

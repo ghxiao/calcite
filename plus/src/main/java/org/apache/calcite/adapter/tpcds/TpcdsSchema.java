@@ -99,7 +99,9 @@ public class TpcdsSchema extends AbstractSchema {
     return tableMap;
   }
 
-  /** Definition of a table in the TPC-DS schema. */
+  /** Definition of a table in the TPC-DS schema.
+   *
+   * @param <E> entity type */
   private class TpcdsQueryableTable<E extends TpcdsEntity>
       extends AbstractQueryableTable {
     private final TpcdsTable<E> tpcdsTable;
@@ -165,7 +167,7 @@ public class TpcdsSchema extends AbstractSchema {
     }
 
     public RelDataType getRowType(RelDataTypeFactory typeFactory) {
-      final RelDataTypeFactory.FieldInfoBuilder builder = typeFactory.builder();
+      final RelDataTypeFactory.Builder builder = typeFactory.builder();
       for (TpcdsColumn<E> column : tpcdsTable.getColumns()) {
         builder.add(column.getColumnName().toUpperCase(Locale.ROOT),
             typeFactory.createJavaType(realType(column)));

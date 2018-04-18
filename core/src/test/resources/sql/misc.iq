@@ -620,11 +620,41 @@ select count(*) as c from "everyTypes" where "utilDate" = TIMESTAMP '1970-01-01 
 
 !ok
 
+# [CALCITE-715] Add PERIOD type constructor and period operators (CONTAINS, PRECEDES, etc.)
+select period("sqlDate", INTERVAL '1' YEAR) as p
+from "everyTypes";
++------------+
+| P          |
++------------+
+| {0, 12}    |
+| {null, 12} |
++------------+
+(2 rows)
+
+!ok
+
+!use foodmart
+
+select count(*) as c
+from "customer"
+where period ("birthdate", DATE '1970-02-05') contains DATE '1964-01-01';
+EnumerableAggregate(group=[{}], C=[COUNT()])
+  EnumerableCalc(expr#0..28=[{inputs}], expr#29=[1970-02-05], expr#30=[<=($t16, $t29)], expr#31=[CASE($t30, $t16, $t29)], expr#32=[1964-01-01], expr#33=[<=($t31, $t32)], expr#34=[CASE($t30, $t29, $t16)], expr#35=[>=($t34, $t32)], expr#36=[AND($t33, $t35)], proj#0..28=[{exprs}], $condition=[$t36])
+    EnumerableTableScan(table=[[foodmart2, customer]])
+!plan
++------+
+| C    |
++------+
+| 7918 |
++------+
+(1 row)
+
+!ok
+
 # [CALCITE-346] Add commutative join rule
 #
 # 3-way join that does not require bushy join.  Best plan is: sales_fact_1997 as
 # left-most leaf, then customer (with filter), then product.
-!use foodmart
 select *
 from "sales_fact_1997" as s
   join "customer" as c using ("customer_id")
@@ -999,6 +1029,89 @@ Expression 'DEPTNO' is not being grouped
 !error
 
 !use scott
+
+# ORDER BY expression with SELECT DISTINCT
+select distinct deptno, job
+from "scott".emp
+order by substring(job from 2 for 1), -deptno;
++--------+-----------+
+| DEPTNO | JOB       |
++--------+-----------+
+|     30 | SALESMAN  |
+|     30 | MANAGER   |
+|     20 | MANAGER   |
+|     10 | MANAGER   |
+|     30 | CLERK     |
+|     20 | CLERK     |
+|     10 | CLERK     |
+|     20 | ANALYST   |
+|     10 | PRESIDENT |
++--------+-----------+
+(9 rows)
+
+!ok
+
+# [CALCITE-2180] Invalid code generated for negative of byte and short values
+select -deptno as d
+from "scott".dept;
++-----+
+| D   |
++-----+
+| -40 |
+| -30 |
+| -20 |
+| -10 |
++-----+
+(4 rows)
+
+!ok
+
+# [CALCITE-2099] Incorrect code generated for UNION
+select count(*) as c from "scott".emp group by deptno
+union
+select count(*) as c from "scott".emp group by deptno;
++---+
+| C |
++---+
+| 3 |
+| 5 |
+| 6 |
++---+
+(3 rows)
+
+!ok
+
+# Similar
+select count(*) as c from "scott".emp group by job
+union all
+select count(*) as c from "scott".dept group by deptno;
++---+
+| C |
++---+
+| 1 |
+| 1 |
+| 1 |
+| 1 |
+| 1 |
+| 2 |
+| 3 |
+| 4 |
+| 4 |
++---+
+(9 rows)
+
+!ok
+
+# [CALCITE-1864] Allow NULL literal as argument
+select count(*) as c from "scott".emp where empno > null;
++---+
+| C |
++---+
+| 0 |
++---+
+(1 row)
+
+!ok
 
 # [CALCITE-613] Implicitly convert strings in comparisons
 select * from "scott".emp where hiredate < '1981-01-02';
@@ -1467,7 +1580,7 @@ select (case when (true) then 1 end) from (values(1));
 EXPR$0 INTEGER(10)
 !type
 
-# Cast an character literal to a timestamp; note: the plan does not contain CAST
+# Cast a character literal to a timestamp; note: the plan does not contain CAST
 values cast('1969-07-21 12:34:56' as timestamp);
 +---------------------+
 | EXPR$0              |
@@ -1478,6 +1591,20 @@ values cast('1969-07-21 12:34:56' as timestamp);
 
 !ok
 EnumerableCalc(expr#0=[{inputs}], expr#1=[1969-07-21 12:34:56], EXPR$0=[$t1])
+  EnumerableValues(tuples=[[{ 0 }]])
+!plan
+
+# Cast a character literal without time to a timestamp; note: the plan does not contain CAST
+values cast('1969-07-21' as timestamp);
++---------------------+
+| EXPR$0              |
++---------------------+
+| 1969-07-21 00:00:00 |
++---------------------+
+(1 row)
+
+!ok
+EnumerableCalc(expr#0=[{inputs}], expr#1=[1969-07-21 00:00:00], EXPR$0=[$t1])
   EnumerableValues(tuples=[[{ 0 }]])
 !plan
 
@@ -1880,13 +2007,11 @@ select TIMESTAMP '2016-02-26 19:06:00.123456789',
 (1 row)
 
 !ok
-EnumerableCalc(expr#0=[{inputs}], expr#1=[2016-02-26 19:06:00.123], expr#2=[2016-02-26 19:06:00], expr#3=[2016-02-26 19:06:00.1], expr#4=[2016-02-26 19:06:00.12], expr#5=[2016-02-26 19:06:00.123], expr#6=[2016-02-26 19:06:00.123], EXPR$0=[$t1], EXPR$1=[$t2], EXPR$2=[$t2], EXPR$3=[$t3], EXPR$4=[$t4], EXPR$5=[$t1], EXPR$6=[$t5], EXPR$7=[$t6])
+EnumerableCalc(expr#0=[{inputs}], expr#1=[2016-02-26 19:06:00.123], expr#2=[2016-02-26 19:06:00], expr#3=[2016-02-26 19:06:00.1], expr#4=[2016-02-26 19:06:00.12], EXPR$0=[$t1], EXPR$1=[$t2], EXPR$2=[$t2], EXPR$3=[$t3], EXPR$4=[$t4], EXPR$5=[$t1], EXPR$6=[$t1], EXPR$7=[$t1])
   EnumerableValues(tuples=[[{ 0 }]])
 !plan
 
 # [CALCITE-1664] CAST('<string>' as TIMESTAMP) adds part of sub-second fraction to the value
-# The following output is incorrect (i.e. demonstrates the bug), but will become
-# correct when we upgrade to Avatica-1.10 (where the bug is fixed).
 select
   TIMESTAMP '2016-02-26 19:06:00.12345678',
   CAST('2016-02-26 19:06:00.12345678' as TIMESTAMP),
@@ -1896,9 +2021,121 @@ select
 +---------------------+---------------------+--------+
 | EXPR$0              | EXPR$1              | EXPR$2 |
 +---------------------+---------------------+--------+
-| 2016-02-26 19:06:00 | 2016-02-26 22:31:46 | 123456 |
+| 2016-02-26 19:06:00 | 2016-02-26 19:06:00 |      0 |
 +---------------------+---------------------+--------+
 (1 row)
+
+!ok
+
+# ARRAY and MULTISET
+select array[1,2] as a from (values (1));
++--------+
+| A      |
++--------+
+| [1, 2] |
++--------+
+(1 row)
+
+!ok
+
+select array[1,null,2] as a from (values (1));
++--------------+
+| A            |
++--------------+
+| [1, null, 2] |
++--------------+
+(1 row)
+
+!ok
+
+values array['a',null,'bcd'],
+  array['efgh'];
++----------------+
+| EXPR$0         |
++----------------+
+| [a, null, bcd] |
+| [efgh]         |
++----------------+
+(2 rows)
+
+!ok
+
+select multiset[1,null,2,2-1] as m from (values (1));
++-----------------+
+| M               |
++-----------------+
+| [1, 1, null, 2] |
++-----------------+
+(1 row)
+
+!ok
+
+!use catchall
+
+# [CALCITE-1054] NPE caused by wrong code generation for Timestamp fields
+select "sqlTimestamp" as T
+from "everyTypes"
+where "sqlTimestamp" >= {ts '1969-01-01 00:00:00'}
+and "sqlTimestamp" < {ts '1998-01-01 00:00:00'};
++---------------------+
+| T                   |
++---------------------+
+| 1970-01-01 00:00:00 |
++---------------------+
+(1 row)
+
+!ok
+
+# [CALCITE-1188] NullPointerException in EXTRACT with WHERE ... IN clause if field has null value
+select extract(YEAR from "sqlTimestamp") Y
+from "everyTypes"
+where extract(YEAR from "sqlTimestamp") IN (1969, 1970);
++------+
+| Y    |
++------+
+| 1970 |
++------+
+(1 row)
+
+!ok
+
+!if (false) {
+# [CALCITE-2032] Error when implicitly converting character literal to date literal
+select *
+from "scott".emp
+WHERE hiredate = '1980-12-17';
++-------+-------+-------+------+------------+--------+------+--------+
+| EMPNO | ENAME | JOB   | MGR  | HIREDATE   | SAL    | COMM | DEPTNO |
++-------+-------+-------+------+------------+--------+------+--------+
+|  7369 | SMITH | CLERK | 7902 | 1980-12-17 | 800.00 |      |     20 |
++-------+-------+-------+------+------------+--------+------+--------+
+(1 row)
+
+!ok
+!}
+
+# [CALCITE-2002] DISTINCT applied to VALUES returns wrong result
+SELECT DISTINCT T.B
+FROM (VALUES (1, 'X'),(2, 'Y'),(3, 'X'),(4, 'X')) AS T(A, B);
++---+
+| B |
++---+
+| X |
+| Y |
++---+
+(2 rows)
+
+!ok
+
+# [CALCITE-2183] Implement RelSubset.copy
+select *
+from (values (1, 'a'), (2, 'b'), (1, 'b'), (2, 'c'), (2, 'c')) as t(x, y)
+where false;
++---+---+
+| X | Y |
++---+---+
++---+---+
+(0 rows)
 
 !ok
 

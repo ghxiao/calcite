@@ -79,7 +79,9 @@ public class TpchSchema extends AbstractSchema {
     return tableMap;
   }
 
-  /** Definition of a table in the TPC-H schema. */
+  /** Definition of a table in the TPC-H schema.
+   *
+   * @param <E> entity type */
   private class TpchQueryableTable<E extends TpchEntity>
       extends AbstractQueryableTable {
     private final TpchTable<E> tpchTable;
@@ -138,7 +140,7 @@ public class TpchSchema extends AbstractSchema {
     }
 
     public RelDataType getRowType(RelDataTypeFactory typeFactory) {
-      final RelDataTypeFactory.FieldInfoBuilder builder = typeFactory.builder();
+      final RelDataTypeFactory.Builder builder = typeFactory.builder();
       String prefix = "";
       if (columnPrefix) {
         final String t = tpchTable.getTableName().toUpperCase(Locale.ROOT);

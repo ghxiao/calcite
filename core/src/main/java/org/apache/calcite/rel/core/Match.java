@@ -16,25 +16,25 @@
  */
 package org.apache.calcite.rel.core;
 
-import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.SingleRel;
 import org.apache.calcite.rel.type.RelDataType;
-import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexPatternFieldRef;
 import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.sql.SqlAggFunction;
-import org.apache.calcite.sql.fun.SqlCountAggFunction;
 import org.apache.calcite.sql.fun.SqlMinMaxAggFunction;
+import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.fun.SqlSumAggFunction;
 import org.apache.calcite.sql.fun.SqlSumEmptyIsZeroAggFunction;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
@@ -59,9 +59,15 @@ public abstract class Match extends SingleRel {
   protected final RexNode pattern;
   protected final boolean strictStart;
   protected final boolean strictEnd;
+  protected final boolean allRows;
+  protected final RexNode after;
   protected final ImmutableMap<String, RexNode> patternDefinitions;
   protected final Set<RexMRAggCall> aggregateCalls;
   protected final Map<String, SortedSet<RexMRAggCall>> aggregateCallsPreVar;
+  protected final ImmutableMap<String, SortedSet<String>> subsets;
+  protected final List<RexNode> partitionKeys;
+  protected final RelCollation orderKeys;
+  protected final RexNode interval;
 
   //~ Constructors -----------------------------------------------
 
@@ -71,25 +77,40 @@ public abstract class Match extends SingleRel {
    * @param cluster Cluster
    * @param traitSet Trait set
    * @param input Input relational expression
+   * @param rowType Row type
    * @param pattern Regular expression that defines pattern variables
    * @param strictStart Whether it is a strict start pattern
    * @param strictEnd Whether it is a strict end pattern
    * @param patternDefinitions Pattern definitions
    * @param measures Measure definitions
-   * @param rowType Row type
+   * @param after After match definitions
+   * @param subsets Subsets of pattern variables
+   * @param allRows Whether all rows per match (false means one row per match)
+   * @param partitionKeys Partition by columns
+   * @param orderKeys Order by columns
+   * @param interval Interval definition, null if WITHIN clause is not defined
    */
-  protected Match(RelOptCluster cluster, RelTraitSet traitSet,
-      RelNode input, RexNode pattern, boolean strictStart, boolean strictEnd,
+  protected Match(RelOptCluster cluster, RelTraitSet traitSet, RelNode input,
+      RelDataType rowType, RexNode pattern,
+      boolean strictStart, boolean strictEnd,
       Map<String, RexNode> patternDefinitions, Map<String, RexNode> measures,
-      RelDataType rowType) {
+      RexNode after, Map<String, ? extends SortedSet<String>> subsets,
+      boolean allRows, List<RexNode> partitionKeys, RelCollation orderKeys,
+      RexNode interval) {
     super(cluster, traitSet, input);
+    this.rowType = Preconditions.checkNotNull(rowType);
     this.pattern = Preconditions.checkNotNull(pattern);
     Preconditions.checkArgument(patternDefinitions.size() > 0);
     this.strictStart = strictStart;
     this.strictEnd = strictEnd;
     this.patternDefinitions = ImmutableMap.copyOf(patternDefinitions);
-    this.rowType = rowType;
     this.measures = ImmutableMap.copyOf(measures);
+    this.after = Preconditions.checkNotNull(after);
+    this.subsets = copyMap(subsets);
+    this.allRows = allRows;
+    this.partitionKeys = ImmutableList.copyOf(partitionKeys);
+    this.orderKeys = Preconditions.checkNotNull(orderKeys);
+    this.interval = interval;
 
     final AggregateFinder aggregateFinder = new AggregateFinder();
     for (RexNode rex : this.patternDefinitions.values()) {
@@ -106,15 +127,16 @@ public abstract class Match extends SingleRel {
 
     aggregateCalls = ImmutableSortedSet.copyOf(aggregateFinder.aggregateCalls);
     aggregateCallsPreVar =
-        copy(aggregateFinder.aggregateCallsPerVar);
+        copyMap(aggregateFinder.aggregateCallsPerVar);
   }
 
-  /** Creates an immutable copy of a map of sorted sets. */
+  /** Creates an immutable map of a map of sorted sets. */
   private static <K extends Comparable<K>, V>
-  ImmutableSortedMap<K, SortedSet<V>> copy(Map<K, SortedSet<V>> map) {
+      ImmutableSortedMap<K, SortedSet<V>>
+      copyMap(Map<K, ? extends SortedSet<V>> map) {
     final ImmutableSortedMap.Builder<K, SortedSet<V>> b =
         ImmutableSortedMap.naturalOrder();
-    for (Map.Entry<K, SortedSet<V>> e : map.entrySet()) {
+    for (Map.Entry<K, ? extends SortedSet<V>> e : map.entrySet()) {
       b.put(e.getKey(), ImmutableSortedSet.copyOf(e.getValue()));
     }
     return b.build();
@@ -124,6 +146,10 @@ public abstract class Match extends SingleRel {
 
   public ImmutableMap<String, RexNode> getMeasures() {
     return measures;
+  }
+
+  public RexNode getAfter() {
+    return after;
   }
 
   public RexNode getPattern() {
@@ -138,14 +164,36 @@ public abstract class Match extends SingleRel {
     return strictEnd;
   }
 
+  public boolean isAllRows() {
+    return allRows;
+  }
+
   public ImmutableMap<String, RexNode> getPatternDefinitions() {
     return patternDefinitions;
   }
 
-  public abstract Match copy(RelNode input, RexNode pattern,
-      boolean strictStart, boolean strictEnd,
+  public ImmutableMap<String, SortedSet<String>> getSubsets() {
+    return subsets;
+  }
+
+  public List<RexNode> getPartitionKeys() {
+    return partitionKeys;
+  }
+
+  public RelCollation getOrderKeys() {
+    return orderKeys;
+  }
+
+  public RexNode getInterval() {
+    return interval;
+  }
+
+  public abstract Match copy(RelNode input, RelDataType rowType,
+      RexNode pattern, boolean strictStart, boolean strictEnd,
       Map<String, RexNode> patternDefinitions, Map<String, RexNode> measures,
-      RelDataType rowType);
+      RexNode after, Map<String, ? extends SortedSet<String>> subsets,
+      boolean allRows, List<RexNode> partitionKeys, RelCollation orderKeys,
+      RexNode interval);
 
   @Override public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
     if (getInputs().equals(inputs)
@@ -153,25 +201,25 @@ public abstract class Match extends SingleRel {
       return this;
     }
 
-    return copy(inputs.get(0), pattern, strictStart, strictEnd,
-        patternDefinitions, measures, rowType);
+    return copy(inputs.get(0), rowType, pattern, strictStart, strictEnd,
+        patternDefinitions, measures, after, subsets, allRows,
+        partitionKeys, orderKeys, interval);
   }
 
   @Override public RelWriter explainTerms(RelWriter pw) {
-    super.explainTerms(pw);
-    if (pw.nest()) {
-      pw.item("fields", rowType.getFieldNames());
-      pw.item("exprs", getMeasures().values().asList());
-    } else {
-      for (Ord<RelDataTypeField> field : Ord.zip(rowType.getFieldList())) {
-        String fieldName = field.e.getName();
-        if (fieldName == null) {
-          fieldName = "Field#" + field.i;
-        }
-        pw.item(fieldName, getMeasures().get(field.i));
-      }
-    }
-    return pw;
+    return super.explainTerms(pw)
+        .item("partition", getPartitionKeys())
+        .item("order", getOrderKeys())
+        .item("outputFields", getRowType().getFieldNames())
+        .item("allRows", isAllRows())
+        .item("after", getAfter())
+        .item("pattern", getPattern())
+        .item("isStrictStarts", isStrictStart())
+        .item("isStrictEnds", isStrictEnd())
+        .itemIf("interval", getInterval(), getInterval() != null)
+        .item("subsets", getSubsets().values().asList())
+        .item("patternDefinitions", getPatternDefinitions().values().asList())
+        .item("inputFields", getInput().getRowType().getFieldNames());
   }
 
   /**
@@ -200,7 +248,7 @@ public abstract class Match extends SingleRel {
         aggFunction = new SqlMinMaxAggFunction(call.getKind());
         break;
       case COUNT:
-        aggFunction = new SqlCountAggFunction();
+        aggFunction = SqlStdOperatorTable.COUNT;
         break;
       default:
         for (RexNode rex : call.getOperands()) {

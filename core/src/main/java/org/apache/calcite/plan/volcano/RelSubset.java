@@ -35,8 +35,6 @@ import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.trace.CalciteTrace;
 
-import com.google.common.collect.Iterables;
-
 import org.slf4j.Logger;
 
 import java.io.PrintWriter;
@@ -128,7 +126,7 @@ public class RelSubset extends AbstractRelNode {
    */
   private void computeBestCost(RelOptPlanner planner) {
     bestCost = planner.getCostFactory().makeInfiniteCost();
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = getCluster().getMetadataQuery();
     for (RelNode rel : getRels()) {
       final RelOptCost cost = planner.getCost(rel, mq);
       if (cost.isLt(bestCost)) {
@@ -147,6 +145,13 @@ public class RelSubset extends AbstractRelNode {
   }
 
   public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
+    if (inputs.isEmpty()) {
+      final RelTraitSet traitSet1 = traitSet.simplify();
+      if (traitSet1.equals(this.traitSet)) {
+        return this;
+      }
+      return set.getOrCreateSubset(getCluster(), traitSet1);
+    }
     throw new UnsupportedOperationException();
   }
 
@@ -168,7 +173,7 @@ public class RelSubset extends AbstractRelNode {
     String s = getDescription();
     pw.item("subset", s);
     final AbstractRelNode input =
-        (AbstractRelNode) Iterables.getFirst(getRels(), null);
+        (AbstractRelNode) Util.first(getBest(), getOriginal());
     if (input == null) {
       return;
     }

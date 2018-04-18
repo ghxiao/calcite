@@ -21,6 +21,7 @@ import org.apache.calcite.prepare.CalcitePrepareImpl;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.mutable.Holder;
@@ -46,6 +47,8 @@ import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.runtime.PredicateImpl;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.tools.RelBuilder;
+import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.ControlFlowException;
 import org.apache.calcite.util.ImmutableBitSet;
@@ -72,9 +75,12 @@ import org.slf4j.Logger;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
 import static org.apache.calcite.rex.RexUtil.andNot;
 import static org.apache.calcite.rex.RexUtil.removeAll;
@@ -126,6 +132,11 @@ public class SubstitutionVisitor {
           AggregateToAggregateUnifyRule.INSTANCE,
           AggregateOnProjectToAggregateUnifyRule.INSTANCE);
 
+  /**
+   * Factory for a builder for relational expressions.
+   */
+  protected final RelBuilder relBuilder;
+
   private final ImmutableList<UnifyRule> rules;
   private final Map<Pair<Class, Class>, List<UnifyRule>> ruleMap =
       new HashMap<>();
@@ -156,19 +167,27 @@ public class SubstitutionVisitor {
 
   /** Creates a SubstitutionVisitor with the default rule set. */
   public SubstitutionVisitor(RelNode target_, RelNode query_) {
-    this(target_, query_, DEFAULT_RULES);
+    this(target_, query_, DEFAULT_RULES, RelFactories.LOGICAL_BUILDER);
   }
 
-  /** Creates a SubstitutionVisitor. */
+  /** Creates a SubstitutionVisitor with the default logical builder. */
   public SubstitutionVisitor(RelNode target_, RelNode query_,
       ImmutableList<UnifyRule> rules) {
+    this(target_, query_, rules, RelFactories.LOGICAL_BUILDER);
+  }
+
+  public SubstitutionVisitor(RelNode target_, RelNode query_,
+      ImmutableList<UnifyRule> rules, RelBuilderFactory relBuilderFactory) {
     this.cluster = target_.getCluster();
     final RexExecutor executor =
         Util.first(cluster.getPlanner().getExecutor(), RexUtil.EXECUTOR);
-    this.simplify = new RexSimplify(cluster.getRexBuilder(), false, executor);
+    final RelOptPredicateList predicates = RelOptPredicateList.EMPTY;
+    this.simplify =
+        new RexSimplify(cluster.getRexBuilder(), predicates, false, executor);
     this.rules = rules;
     this.query = Holder.of(MutableRels.toMutable(query_));
     this.target = MutableRels.toMutable(target_);
+    this.relBuilder = relBuilderFactory.create(cluster, null);
     final Set<MutableRel> parents = Sets.newIdentityHashSet();
     final List<MutableRel> allNodes = new ArrayList<>();
     final MutableRelVisitor visitor =
@@ -207,9 +226,9 @@ public class SubstitutionVisitor {
    *
    * <p>The terms satisfy the relation</p>
    *
-   * <pre>
-   *     {@code condition = target AND residue}
-   * </pre>
+   * <blockquote>
+   * <pre>{@code condition = target AND residue}</pre>
+   * </blockquote>
    *
    * <p>and {@code residue} must be as weak as possible.</p>
    *
@@ -229,7 +248,7 @@ public class SubstitutionVisitor {
    * <ul>
    * <li>condition: x = 1</li>
    * <li>target: x = 1 OR z = 3</li>
-   * <li>residue: NOT (z = 3)</li>
+   * <li>residue: x = 1</li>
    * </ul>
    *
    * <p>Example #3: condition and target are equivalent</p>
@@ -255,35 +274,109 @@ public class SubstitutionVisitor {
   @VisibleForTesting
   public static RexNode splitFilter(final RexSimplify simplify,
       RexNode condition, RexNode target) {
+    RexNode condition2 = canonizeNode(simplify.rexBuilder, condition);
+    RexNode target2 = canonizeNode(simplify.rexBuilder, target);
+
     // First, try splitting into ORs.
     // Given target    c1 OR c2 OR c3 OR c4
     // and condition   c2 OR c4
-    // residue is      NOT c1 AND NOT c3
+    // residue is      c2 OR c4
     // Also deals with case target [x] condition [x] yields residue [true].
-    RexNode z = splitOr(simplify.rexBuilder, condition, target);
+    RexNode z = splitOr(simplify.rexBuilder, condition2, target2);
     if (z != null) {
       return z;
     }
 
-    RexNode x = andNot(simplify.rexBuilder, target, condition);
+    if (isEquivalent(simplify.rexBuilder, condition2, target2)) {
+      return simplify.rexBuilder.makeLiteral(true);
+    }
+
+    RexNode x = andNot(simplify.rexBuilder, target2, condition2);
     if (mayBeSatisfiable(x)) {
-      RexNode x2 = andNot(simplify.rexBuilder, condition, target);
-      return simplify.simplify(x2);
+      RexNode x2 = RexUtil.composeConjunction(simplify.rexBuilder,
+          ImmutableList.of(condition2, target2), false);
+      RexNode r = canonizeNode(simplify.rexBuilder,
+          simplify.withUnknownAsFalse(true).simplify(x2));
+      if (!r.isAlwaysFalse() && isEquivalent(simplify.rexBuilder, condition2, r)) {
+        List<RexNode> conjs = RelOptUtil.conjunctions(r);
+        for (RexNode e : RelOptUtil.conjunctions(target2)) {
+          removeAll(conjs, e);
+        }
+        return RexUtil.composeConjunction(simplify.rexBuilder, conjs, false);
+      }
     }
     return null;
   }
 
+  /**
+   * Reorders some of the operands in this expression so structural comparison,
+   * i.e., based on string representation, can be more precise.
+   */
+  private static RexNode canonizeNode(RexBuilder rexBuilder, RexNode condition) {
+    switch (condition.getKind()) {
+    case AND:
+    case OR: {
+      RexCall call = (RexCall) condition;
+      SortedMap<String, RexNode> newOperands = new TreeMap<>();
+      for (RexNode operand : call.operands) {
+        operand = canonizeNode(rexBuilder, operand);
+        newOperands.put(operand.toString(), operand);
+      }
+      if (newOperands.size() < 2) {
+        return newOperands.values().iterator().next();
+      }
+      return rexBuilder.makeCall(call.getOperator(),
+          ImmutableList.copyOf(newOperands.values()));
+    }
+    case EQUALS:
+    case NOT_EQUALS:
+    case LESS_THAN:
+    case GREATER_THAN:
+    case LESS_THAN_OR_EQUAL:
+    case GREATER_THAN_OR_EQUAL: {
+      RexCall call = (RexCall) condition;
+      final RexNode left = call.getOperands().get(0);
+      final RexNode right = call.getOperands().get(1);
+      if (left.toString().compareTo(right.toString()) <= 0) {
+        return call;
+      }
+      return RexUtil.invert(rexBuilder, call);
+    }
+    default:
+      return condition;
+    }
+  }
+
   private static RexNode splitOr(
       final RexBuilder rexBuilder, RexNode condition, RexNode target) {
-    List<RexNode> targets = RelOptUtil.disjunctions(target);
-    for (RexNode e : RelOptUtil.disjunctions(condition)) {
-      boolean found = removeAll(targets, e);
-      if (!found) {
-        return null;
-      }
+    List<RexNode> conditions = RelOptUtil.disjunctions(condition);
+    int conditionsLength = conditions.size();
+    int targetsLength = 0;
+    for (RexNode e : RelOptUtil.disjunctions(target)) {
+      removeAll(conditions, e);
+      targetsLength++;
     }
-    return RexUtil.composeConjunction(rexBuilder,
-        Lists.transform(targets, RexUtil.notFn(rexBuilder)), false);
+    if (conditions.isEmpty() && conditionsLength == targetsLength) {
+      return rexBuilder.makeLiteral(true);
+    } else if (conditions.isEmpty()) {
+      return condition;
+    }
+    return null;
+  }
+
+  private static boolean isEquivalent(RexBuilder rexBuilder, RexNode condition, RexNode target) {
+    // Example:
+    //  e: x = 1 AND y = 2 AND z = 3 AND NOT (x = 1 AND y = 2)
+    //  disjunctions: {x = 1, y = 2, z = 3}
+    //  notDisjunctions: {x = 1 AND y = 2}
+    final Set<String> conditionDisjunctions = new HashSet<>(
+        RexUtil.strings(RelOptUtil.conjunctions(condition)));
+    final Set<String> targetDisjunctions = new HashSet<>(
+        RexUtil.strings(RelOptUtil.conjunctions(target)));
+    if (conditionDisjunctions.equals(targetDisjunctions)) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -363,7 +456,7 @@ public class SubstitutionVisitor {
           + "\nnode:\n"
           + node.deep());
     }
-    return MutableRels.fromMutable(node);
+    return MutableRels.fromMutable(node, relBuilder);
   }
 
   /**
@@ -380,8 +473,8 @@ public class SubstitutionVisitor {
       return ImmutableList.of();
     }
     List<RelNode> sub = Lists.newArrayList();
-    sub.add(MutableRels.fromMutable(query.getInput()));
-    reverseSubstitute(query, matches, sub, 0, matches.size());
+    sub.add(MutableRels.fromMutable(query.getInput(), relBuilder));
+    reverseSubstitute(relBuilder, query, matches, sub, 0, matches.size());
     return sub;
   }
 
@@ -562,19 +655,19 @@ public class SubstitutionVisitor {
     }
   }
 
-  private static void reverseSubstitute(Holder query,
+  private static void reverseSubstitute(RelBuilder relBuilder, Holder query,
       List<List<Replacement>> matches, List<RelNode> sub,
       int replaceCount, int maxCount) {
     if (matches.isEmpty()) {
       return;
     }
     final List<List<Replacement>> rem = matches.subList(1, matches.size());
-    reverseSubstitute(query, rem, sub, replaceCount, maxCount);
+    reverseSubstitute(relBuilder, query, rem, sub, replaceCount, maxCount);
     undoReplacement(matches.get(0));
     if (++replaceCount < maxCount) {
-      sub.add(MutableRels.fromMutable(query.getInput()));
+      sub.add(MutableRels.fromMutable(query.getInput(), relBuilder));
     }
-    reverseSubstitute(query, rem, sub, replaceCount, maxCount);
+    reverseSubstitute(relBuilder, query, rem, sub, replaceCount, maxCount);
     redoReplacement(matches.get(0));
   }
 
@@ -1137,6 +1230,9 @@ public class SubstitutionVisitor {
       //   target: SELECT x, y, SUM(a) AS s, COUNT(b) AS cb FROM t GROUP BY x, y
       // transforms to
       //   result: SELECT x, SUM(cb) FROM (target) GROUP BY x
+      if (query.getInput() != target.getInput()) {
+        return null;
+      }
       if (!target.groupSet.contains(query.groupSet)) {
         return null;
       }
@@ -1155,8 +1251,7 @@ public class SubstitutionVisitor {
         Mappings.apply2(mapping, aggregate.groupSets);
     List<AggregateCall> aggregateCalls =
         apply(mapping, aggregate.aggCalls);
-    return MutableAggregate.of(input, aggregate.indicator, groupSet, groupSets,
-        aggregateCalls);
+    return MutableAggregate.of(input, groupSet, groupSets, aggregateCalls);
   }
 
   private static List<AggregateCall> apply(final Mapping mapping,
@@ -1214,11 +1309,11 @@ public class SubstitutionVisitor {
         }
         aggregateCalls.add(
             AggregateCall.create(getRollup(aggregateCall.getAggregation()),
-                aggregateCall.isDistinct(),
+                aggregateCall.isDistinct(), aggregateCall.isApproximate(),
                 ImmutableList.of(target.groupSet.cardinality() + i), -1,
                 aggregateCall.type, aggregateCall.name));
       }
-      result = MutableAggregate.of(target, false, groupSet.build(), null,
+      result = MutableAggregate.of(target, groupSet.build(), null,
           aggregateCalls);
     }
     return MutableRels.createCastRel(result, query.rowType, true);
@@ -1495,12 +1590,18 @@ public class SubstitutionVisitor {
         };
 
     public static final FilterOnProjectRule INSTANCE =
-        new FilterOnProjectRule();
+        new FilterOnProjectRule(RelFactories.LOGICAL_BUILDER);
 
-    private FilterOnProjectRule() {
+    /**
+     * Creates a FilterOnProjectRule.
+     *
+     * @param relBuilderFactory Builder for relational expressions
+     */
+    public FilterOnProjectRule(RelBuilderFactory relBuilderFactory) {
       super(
           operand(LogicalFilter.class, null, PREDICATE,
-              some(operand(LogicalProject.class, any()))));
+              some(operand(LogicalProject.class, any()))),
+          relBuilderFactory, null);
     }
 
     public void onMatch(RelOptRuleCall call) {

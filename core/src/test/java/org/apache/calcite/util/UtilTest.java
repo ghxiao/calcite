@@ -30,10 +30,12 @@ import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.Resources;
 import org.apache.calcite.runtime.SqlFunctions;
 import org.apache.calcite.runtime.Utilities;
-import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlCollation;
+import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 import org.apache.calcite.sql.util.SqlBuilder;
 import org.apache.calcite.sql.util.SqlString;
 import org.apache.calcite.test.DiffTestCase;
+import org.apache.calcite.test.Matchers;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
@@ -43,6 +45,8 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.Ints;
 
+import org.hamcrest.Matcher;
+import org.hamcrest.StringDescription;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -51,18 +55,21 @@ import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
 import java.lang.management.MemoryType;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -74,6 +81,8 @@ import java.util.SortedSet;
 import java.util.TimeZone;
 import java.util.TreeSet;
 import javax.annotation.Nullable;
+
+import static org.apache.calcite.test.Matchers.isLinux;
 
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.instanceOf;
@@ -214,7 +223,7 @@ public class UtilTest {
             new String(bytes1, "EUC-JP"),
             0));
     byte[] bytes2 = {
-      64, 32, 43, -45, -23, 0, 43, 54, 119, -32, -56, -34
+        64, 32, 43, -45, -23, 0, 43, 54, 119, -32, -56, -34
     };
     assertEquals(
         "ID$0$_30c__3617__2117__2d15__7fde__a48f_",
@@ -534,19 +543,19 @@ public class UtilTest {
    */
   @Test public void testDiffLines() {
     String[] before = {
-      "Get a dose of her in jackboots and kilt",
-      "She's killer-diller when she's dressed to the hilt",
-      "She's the kind of a girl that makes The News of The World",
-      "Yes you could say she was attractively built.",
-      "Yeah yeah yeah."
+        "Get a dose of her in jackboots and kilt",
+        "She's killer-diller when she's dressed to the hilt",
+        "She's the kind of a girl that makes The News of The World",
+        "Yes you could say she was attractively built.",
+        "Yeah yeah yeah."
     };
     String[] after = {
-      "Get a dose of her in jackboots and kilt",
-      "(they call her \"Polythene Pam\")",
-      "She's killer-diller when she's dressed to the hilt",
-      "She's the kind of a girl that makes The Sunday Times",
-      "seem more interesting.",
-      "Yes you could say she was attractively built."
+        "Get a dose of her in jackboots and kilt",
+        "(they call her \"Polythene Pam\")",
+        "She's killer-diller when she's dressed to the hilt",
+        "She's the kind of a girl that makes The Sunday Times",
+        "seem more interesting.",
+        "Yes you could say she was attractively built."
     };
     String diff =
         DiffTestCase.diffLines(
@@ -651,7 +660,7 @@ public class UtilTest {
    * Tests SQL builders.
    */
   @Test public void testSqlBuilder() {
-    final SqlBuilder buf = new SqlBuilder(SqlDialect.CALCITE);
+    final SqlBuilder buf = new SqlBuilder(CalciteSqlDialect.DEFAULT);
     assertEquals(0, buf.length());
     buf.append("select ");
     assertEquals("select ", buf.getSql());
@@ -664,7 +673,7 @@ public class UtilTest {
     assertEquals("select \"x\", \"y\".\"a b\"", buf.getSql());
 
     final SqlString sqlString = buf.toSqlString();
-    assertEquals(SqlDialect.CALCITE, sqlString.getDialect());
+    assertEquals(CalciteSqlDialect.DEFAULT, sqlString.getDialect());
     assertEquals(buf.getSql(), sqlString.getSql());
 
     assertTrue(buf.getSql().length() > 0);
@@ -829,18 +838,18 @@ public class UtilTest {
    */
   @Test public void testParseLocale() {
     Locale[] locales = {
-      Locale.CANADA,
-      Locale.CANADA_FRENCH,
-      Locale.getDefault(),
-      Locale.US,
-      Locale.TRADITIONAL_CHINESE,
+        Locale.CANADA,
+        Locale.CANADA_FRENCH,
+        Locale.getDefault(),
+        Locale.US,
+        Locale.TRADITIONAL_CHINESE,
     };
     for (Locale locale : locales) {
       assertEquals(locale, Util.parseLocale(locale.toString()));
     }
     // Example locale names in Locale.toString() javadoc.
     String[] localeNames = {
-      "en", "de_DE", "_GB", "en_US_WIN", "de__POSIX", "fr__MAC"
+        "en", "de_DE", "_GB", "en_US_WIN", "de__POSIX", "fr__MAC"
     };
     for (String localeName : localeNames) {
       assertEquals(localeName, Util.parseLocale(localeName).toString());
@@ -1457,6 +1466,35 @@ public class UtilTest {
     }
   }
 
+  /** Unit test for {@link Util#distinctList(List)}
+   * and {@link Util#distinctList(Iterable)}. */
+  @Test public void testDistinctList() {
+    assertThat(Util.distinctList(Arrays.asList(1, 2)), is(Arrays.asList(1, 2)));
+    assertThat(Util.distinctList(Arrays.asList(1, 2, 1)),
+        is(Arrays.asList(1, 2)));
+    try {
+      List<Object> o = Util.distinctList(null);
+      fail("expected exception, got " + o);
+    } catch (NullPointerException ignore) {
+    }
+    final List<Integer> empty = ImmutableList.of();
+    assertThat(Util.distinctList(empty), sameInstance(empty));
+    final Iterable<Integer> emptyIterable = empty;
+    assertThat(Util.distinctList(emptyIterable), sameInstance(emptyIterable));
+    final List<Integer> empty2 = ImmutableList.of();
+    assertThat(Util.distinctList(empty2), sameInstance(empty2));
+    final List<String> abc = ImmutableList.of("a", "b", "c");
+    assertThat(Util.distinctList(abc), sameInstance(abc));
+    final List<String> a = ImmutableList.of("a");
+    assertThat(Util.distinctList(a), sameInstance(a));
+    final List<String> cbca = ImmutableList.of("c", "b", "c", "a");
+    assertThat(Util.distinctList(cbca), not(sameInstance(cbca)));
+    assertThat(Util.distinctList(cbca), is(Arrays.asList("c", "b", "a")));
+    final Collection<String> cbcaC = new LinkedHashSet<>(cbca);
+    assertThat(Util.distinctList(cbcaC), not(sameInstance(cbca)));
+    assertThat(Util.distinctList(cbcaC), is(Arrays.asList("c", "b", "a")));
+  }
+
   /** Unit test for {@link Utilities#hashCode(double)}. */
   @Test public void testHash() {
     checkHash(0d);
@@ -1498,6 +1536,16 @@ public class UtilTest {
 
   @Test public void testResources() {
     Resources.validate(Static.RESOURCE);
+    checkResourceMethodNames(Static.RESOURCE);
+  }
+
+  private void checkResourceMethodNames(Object resource) {
+    for (Method method : resource.getClass().getMethods()) {
+      if (!Modifier.isStatic(method.getModifiers())
+          && !method.getName().matches("^[a-z][A-Za-z0-9_]*$")) {
+        fail("resource method name must be camel case: " + method.getName());
+      }
+    }
   }
 
   /** Tests that sorted sets behave the way we expect. */
@@ -1995,6 +2043,92 @@ public class UtilTest {
     assertThat(map.range("baz", true).size(), is(2));
     assertThat(map.range("BAZ", true).size(), is(0));
     assertThat(map.range("Baz", true).size(), is(1));
+  }
+
+  @Test public void testNlsStringClone() {
+    final NlsString s = new NlsString("foo", "LATIN1", SqlCollation.IMPLICIT);
+    assertThat(s.toString(), is("_LATIN1'foo'"));
+    final Object s2 = s.clone();
+    assertThat(s2, instanceOf(NlsString.class));
+    assertThat(s2, not(sameInstance((Object) s)));
+    assertThat(s2.toString(), is(s.toString()));
+  }
+
+  @Test public void testXmlOutput() {
+    final StringWriter w = new StringWriter();
+    final XmlOutput o = new XmlOutput(w);
+    o.beginBeginTag("root");
+    o.attribute("a1", "v1");
+    o.attribute("a2", null);
+    o.endBeginTag("root");
+    o.beginTag("someText", null);
+    o.content("line 1 followed by empty line\n"
+        + "\n"
+        + "line 3 with windows line ending\r\n"
+        + "line 4 with no ending");
+    o.endTag("someText");
+    o.endTag("root");
+    final String s = w.toString();
+    final String expected = ""
+        + "<root a1=\"v1\">\n"
+        + "\t<someText>\n"
+        + "\t\t\tline 1 followed by empty line\n"
+        + "\t\t\t\n"
+        + "\t\t\tline 3 with windows line ending\n"
+        + "\t\t\tline 4 with no ending\n"
+        + "\t</someText>\n"
+        + "</root>\n";
+    assertThat(Util.toLinux(s), is(expected));
+  }
+
+  /** Unit test for {@link Matchers#compose}. */
+  @Test public void testComposeMatcher() {
+    assertThat("x", is("x"));
+    assertThat(is("x").matches("x"), is(true));
+    assertThat(is("X").matches("x"), is(false));
+    final Function<String, String> toUpper =
+        new Function<String, String>() {
+          public String apply(String input) {
+            return input.toUpperCase(Locale.ROOT);
+          }
+        };
+    assertThat(Matchers.compose(is("A"), toUpper).matches("a"), is(true));
+    assertThat(Matchers.compose(is("A"), toUpper).matches("A"), is(true));
+    assertThat(Matchers.compose(is("a"), toUpper).matches("A"), is(false));
+    assertThat(describe(Matchers.compose(is("a"), toUpper)), is("is \"a\""));
+    assertThat(mismatchDescription(Matchers.compose(is("a"), toUpper), "A"),
+        is("was \"A\""));
+  }
+
+  /** Unit test for {@link Matchers#isLinux}. */
+  @Test public void testIsLinux() {
+    assertThat("xy", isLinux("xy"));
+    assertThat("x\ny", isLinux("x\ny"));
+    assertThat("x\r\ny", isLinux("x\ny"));
+    assertThat(isLinux("x").matches("x"), is(true));
+    assertThat(isLinux("X").matches("x"), is(false));
+    assertThat(mismatchDescription(isLinux("X"), "x"), is("was \"x\""));
+    assertThat(describe(isLinux("X")), is("is \"X\""));
+    assertThat(isLinux("x\ny").matches("x\ny"), is(true));
+    assertThat(isLinux("x\ny").matches("x\r\ny"), is(true));
+    // \n\r is not a valid windows line ending
+    assertThat(isLinux("x\ny").matches("x\n\ry"), is(false));
+    assertThat(isLinux("x\ny").matches("x\n\ryz"), is(false));
+    // left-hand side must be linux or will never match
+    assertThat(isLinux("x\r\ny").matches("x\r\ny"), is(false));
+    assertThat(isLinux("x\r\ny").matches("x\ny"), is(false));
+  }
+
+  static String mismatchDescription(Matcher m, Object item) {
+    final StringDescription d = new StringDescription();
+    m.describeMismatch(item, d);
+    return d.toString();
+  }
+
+  static String describe(Matcher m) {
+    final StringDescription d = new StringDescription();
+    m.describeTo(d);
+    return d.toString();
   }
 }
 
