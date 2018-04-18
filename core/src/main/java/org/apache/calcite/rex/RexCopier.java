@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.rex;
 
+import com.google.common.collect.ImmutableList;
 import org.apache.calcite.rel.type.RelDataType;
 
 /**
@@ -52,7 +53,18 @@ class RexCopier extends RexShuttle {
   }
 
   public RexNode visitOver(RexOver over) {
-    throw new UnsupportedOperationException();
+    return over;
+//    return builder.makeOver(builder.getTypeFactory().copyType(over.getType()),
+//            over.getAggOperator(),
+//            ImmutableList.copyOf(over.getOperands()),
+//            ImmutableList.copyOf(over.getWindow().partitionKeys),
+//            ImmutableList.copyOf(over.getWindow().orderKeys),
+//            over.getWindow().getLowerBound(),
+//            over.getWindow().getUpperBound(),
+//            over.getWindow().isRows(),
+//            true,
+//            false,
+//            false);
   }
 
   public RexWindow visitWindow(RexWindow window) {

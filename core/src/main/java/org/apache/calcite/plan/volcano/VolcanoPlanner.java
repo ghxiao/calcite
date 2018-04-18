@@ -598,7 +598,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
       int tick = 0;
       int firstFiniteTick = -1;
       int splitCount = 0;
-      int giveUpTick = Integer.MAX_VALUE;
+      int giveUpTick = 3000;
 
       while (true) {
         ++tick;
@@ -862,9 +862,9 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     }
     final RelSubset subset = registerImpl(rel, set);
 
-    if (LOGGER.isDebugEnabled()) {
-      validate();
-    }
+//    if (LOGGER.isDebugEnabled()) {
+//      validate();
+//    }
 
     return subset;
   }

@@ -93,7 +93,7 @@ public class SqlLeadLagAggFunction extends SqlAggFunction {
   }
 
   @Override public boolean allowsFraming() {
-    return false;
+    return true;
   }
 
 }

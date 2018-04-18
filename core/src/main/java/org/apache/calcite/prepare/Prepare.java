@@ -196,6 +196,11 @@ public abstract class Prepare {
   }
 
   protected Program getProgram() {
+
+
+    //return Programs.ofRules();
+
+
     // Allow a test to override the default program.
     final Holder<Program> holder = Holder.of(null);
     Hook.PROGRAM.run(holder);

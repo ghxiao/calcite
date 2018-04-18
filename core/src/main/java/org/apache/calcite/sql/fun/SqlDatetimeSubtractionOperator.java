@@ -16,8 +16,6 @@
  */
 package org.apache.calcite.sql.fun;
 
-
-
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperatorBinding;
@@ -51,7 +49,8 @@ public class SqlDatetimeSubtractionOperator extends SqlSpecialOperator {
         40,
         true,
         ReturnTypes.ARG2_NULLABLE,
-        InferTypes.FIRST_KNOWN, OperandTypes.MINUS_DATE_OPERATOR);
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.MINUS_DATE_OPERATOR);
   }
 
   //~ Methods ----------------------------------------------------------------
