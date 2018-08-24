@@ -136,7 +136,7 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
       connection = dataSource.getConnection();
       statement = connection.createStatement();
       try {
-        statement.setQueryTimeout(10);
+        statement.setQueryTimeout(100000);
       } catch (SQLFeatureNotSupportedException e) {
         LOGGER.debug("Failed to set query timeout.");
       }
